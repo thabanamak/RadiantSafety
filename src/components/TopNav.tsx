@@ -1,16 +1,26 @@
 "use client";
 
-import { Shield, AlertCircle, LogIn, UserPlus, LogOut, ChevronDown, Bot } from "lucide-react";
+import Link from "next/link";
+import {
+  Shield,
+  AlertCircle,
+  LogIn,
+  UserPlus,
+  LogOut,
+  ChevronDown,
+  Bot,
+  UserCircle,
+  ClipboardList,
+  Settings,
+} from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
 import type { UserReputation, UserReport } from "@/lib/types";
 import { userReports } from "@/lib/mock-data";
+import type { AuthUser } from "@/lib/auth-storage";
 import SearchBar from "./SearchBar";
 
-export interface AuthUser {
-  name: string;
-  email: string;
-}
+export type { AuthUser };
 
 export type DashboardTab = "pulse" | "news";
 
@@ -20,9 +30,8 @@ interface TopNavProps {
   reports: UserReport[];
   onSearchSelectIncident: (report: UserReport) => void;
   onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
-  onLoginClick: () => void;
-  onSignupClick: () => void;
   onLogout: () => void;
+  onViewPastReports: () => void;
   onChatToggle: () => void;
   isChatOpen: boolean;
 }
@@ -33,9 +42,8 @@ export default function TopNav({
   reports,
   onSearchSelectIncident,
   onSearchSelectArea,
-  onLoginClick,
-  onSignupClick,
   onLogout,
+  onViewPastReports,
   onChatToggle,
   isChatOpen,
 }: TopNavProps) {
@@ -52,26 +60,6 @@ export default function TopNav({
           </span>
         </div>
 
-        {user && (
-          <>
-            <div className="h-4 w-px bg-gray-700" />
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-100">
-                {reputation.score}%
-              </span>
-              <span
-                className={cn(
-                  "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                  reputation.isTrusted
-                    ? "bg-radiant-green/20 text-radiant-green"
-                    : "bg-yellow-500/20 text-yellow-400"
-                )}
-              >
-                {reputation.label}
-              </span>
-            </div>
-          </>
-        )}
       </div>
 
       {/* Center: Search */}
@@ -112,23 +100,28 @@ export default function TopNav({
         <div className="h-5 w-px bg-gray-700" />
 
         {user ? (
-          <AccountDropdown user={user} onLogout={onLogout} />
+          <AccountDropdown
+            user={user}
+            reputation={reputation}
+            onLogout={onLogout}
+            onViewPastReports={onViewPastReports}
+          />
         ) : (
           <div className="flex items-center gap-2">
-            <button
-              onClick={onLoginClick}
+            <Link
+              href="/login"
               className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
             >
               <LogIn className="h-3.5 w-3.5" />
               Log In
-            </button>
-            <button
-              onClick={onSignupClick}
+            </Link>
+            <Link
+              href="/signup"
               className="flex items-center gap-1.5 rounded-lg bg-radiant-red px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-red-500/20 transition-all hover:shadow-red-500/40"
             >
               <UserPlus className="h-3.5 w-3.5" />
               Sign Up
-            </button>
+            </Link>
           </div>
         )}
       </div>
@@ -138,10 +131,14 @@ export default function TopNav({
 
 function AccountDropdown({
   user,
+  reputation,
   onLogout,
+  onViewPastReports,
 }: {
   user: AuthUser;
+  reputation: UserReputation;
   onLogout: () => void;
+  onViewPastReports: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -156,46 +153,96 @@ function AccountDropdown({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const initials = user.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-
   return (
     <div ref={ref} className="relative">
       <button
+        type="button"
         onClick={() => setOpen((p) => !p)}
-        className="flex items-center gap-2 rounded-lg border border-radiant-border px-2.5 py-1.5 transition-colors hover:border-gray-500"
+        className={cn(
+          "flex items-center gap-1 rounded-full border border-radiant-border p-1 pr-2 transition-colors hover:border-gray-500",
+          open && "border-gray-500"
+        )}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Account menu"
       >
-        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-radiant-red/20 text-[10px] font-bold text-radiant-red">
-          {initials}
-        </div>
-        <span className="hidden text-xs font-medium text-gray-300 lg:block">
-          {user.name}
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-radiant-red/15 text-radiant-red">
+          <UserCircle className="h-5 w-5" strokeWidth={1.75} />
         </span>
         <ChevronDown
           className={cn(
-            "h-3 w-3 text-gray-500 transition-transform",
+            "hidden h-3.5 w-3.5 text-gray-500 transition-transform sm:block",
             open && "rotate-180"
           )}
         />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl">
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 w-60 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl"
+        >
           <div className="px-3 py-2">
             <p className="text-xs font-semibold text-gray-200">{user.name}</p>
-            <p className="text-[11px] text-gray-500">{user.email}</p>
+            <p className="truncate text-[11px] text-gray-500">{user.email}</p>
           </div>
+
+          <div className="mx-2 mb-2 rounded-lg border border-radiant-border bg-radiant-card/80 px-3 py-2">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
+              Reputation
+            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="text-lg font-bold tabular-nums text-gray-100">
+                {reputation.score}
+              </span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  reputation.isTrusted
+                    ? "bg-radiant-green/20 text-radiant-green"
+                    : "bg-gray-600/40 text-gray-300"
+                )}
+              >
+                {reputation.label}
+              </span>
+            </div>
+          </div>
+
+          <div className="my-1 h-px bg-radiant-border" />
+
+          <Link
+            href="/profile"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-radiant-card hover:text-white"
+          >
+            <Settings className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+            Manage your profile
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onViewPastReports();
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-radiant-card hover:text-white"
+          >
+            <ClipboardList className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+            View past reports
+          </button>
+
           <div className="my-1 h-px bg-radiant-border" />
           <button
-            onClick={() => { onLogout(); setOpen(false); }}
+            type="button"
+            onClick={() => {
+              onLogout();
+              setOpen(false);
+            }}
             className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-400 transition-colors hover:bg-radiant-card hover:text-gray-200"
           >
             <LogOut className="h-3.5 w-3.5" />
-            Log Out
+            Log out
           </button>
         </div>
       )}

@@ -1,21 +1,37 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import RadiantMap from "@/components/RadiantMap";
 import TopNav from "@/components/TopNav";
-import type { AuthUser, DashboardTab } from "@/components/TopNav";
+import type { DashboardTab } from "@/components/TopNav";
 import IncidentFeed from "@/components/IncidentFeed";
 import QuickReportFAB from "@/components/QuickReportFAB";
-import AuthModal from "@/components/AuthModal";
 import SafetyChatbot from "@/components/SafetyChatbot";
-import { currentUser, userReports } from "@/lib/mock-data";
+import type { AuthUser } from "@/lib/auth-storage";
+import {
+  clearStoredUser,
+  DEFAULT_REPUTATION_SCORE,
+  getStoredUser,
+} from "@/lib/auth-storage";
+import type { UserReputation } from "@/lib/types";
+import { currentUser as mockCurrentUser, userReports } from "@/lib/mock-data";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed, { type NewsIncidentItem } from "@/components/NewsIncidentFeed";
 import NewsSidebar from "@/components/NewsSidebar";
 
-type ModalState = "closed" | "login" | "signup";
+function reputationForAuthUser(user: AuthUser): UserReputation {
+  const score = user.reputationScore ?? DEFAULT_REPUTATION_SCORE;
+  return {
+    score,
+    label: score >= 70 ? "Trusted" : "Community",
+    isTrusted: score >= 70,
+  };
+}
 
 export default function Dashboard() {
+  const pathname = usePathname();
+
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
     longitude: number;
@@ -24,8 +40,13 @@ export default function Dashboard() {
 
   const [activeTab, setActiveTab] = useState<DashboardTab>("pulse");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [modalState, setModalState] = useState<ModalState>("closed");
   const [isChatOpen, setIsChatOpen] = useState(false);
+
+  useEffect(() => {
+    if (pathname === "/") {
+      setAuthUser(getStoredUser());
+    }
+  }, [pathname]);
 
   const [newsLoaded, setNewsLoaded] = useState(false);
   const [newsLoading, setNewsLoading] = useState(false);
@@ -42,12 +63,19 @@ export default function Dashboard() {
     []
   );
 
-  const handleAuth = useCallback((user: AuthUser) => {
-    setAuthUser(user);
+  const handleLogout = useCallback(() => {
+    clearStoredUser();
+    setAuthUser(null);
   }, []);
 
-  const handleLogout = useCallback(() => {
-    setAuthUser(null);
+  const handleViewPastReports = useCallback(() => {
+    setActiveTab("pulse");
+    setFlyTarget(null);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("feed-past-reports")
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, []);
 
   const loadNews = useCallback(async () => {
@@ -86,14 +114,15 @@ export default function Dashboard() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         <TopNav
-          reputation={currentUser}
+          reputation={
+            authUser ? reputationForAuthUser(authUser) : mockCurrentUser
+          }
           user={authUser}
           reports={activeTab === "news" ? [] : userReports}
           onSearchSelectIncident={handleViewMap}
           onSearchSelectArea={handleSelectArea}
-          onLoginClick={() => setModalState("login")}
-          onSignupClick={() => setModalState("signup")}
           onLogout={handleLogout}
+          onViewPastReports={handleViewPastReports}
           onChatToggle={() => setIsChatOpen((p) => !p)}
           isChatOpen={isChatOpen}
         />
@@ -125,7 +154,9 @@ export default function Dashboard() {
         </div>
 
         {activeTab === "pulse" && (
-          <IncidentFeed reports={userReports} onViewMap={handleViewMap} />
+          <div id="feed-past-reports" className="pointer-events-auto">
+            <IncidentFeed reports={userReports} onViewMap={handleViewMap} />
+          </div>
         )}
 
         {activeTab === "news" && (
@@ -155,12 +186,6 @@ export default function Dashboard() {
       )}
 
       <SafetyChatbot isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
-
-      <AuthModal
-        isOpen={modalState !== "closed"}
-        onClose={() => setModalState("closed")}
-        onAuth={handleAuth}
-      />
     </main>
   );
 }
