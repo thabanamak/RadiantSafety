@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import re
 from pathlib import Path
 from typing import Optional
@@ -52,7 +53,54 @@ ES_PAGE_SIZE = 300
 
 REQUEST_TIMEOUT = 30  # seconds
 
-# Suburb name → [latitude, longitude]
+JITTER_RANGE = 0.002  # ~220 m at Melbourne's latitude
+
+# Street-level coords for major CBD streets — checked FIRST for fine-grained
+# placement so incidents in the CBD don't all stack on one point.
+STREET_COORDS: dict[str, tuple[float, float]] = {
+    # CBD grid
+    "Swanston":        (-37.8124, 144.9648),
+    "Flinders Lane":   (-37.8170, 144.9660),
+    "Flinders":        (-37.8183, 144.9671),
+    "Bourke":          (-37.8130, 144.9650),
+    "Collins":         (-37.8150, 144.9660),
+    "Lonsdale":        (-37.8100, 144.9610),
+    "Elizabeth":        (-37.8115, 144.9620),
+    "King":            (-37.8150, 144.9560),
+    "Spring":          (-37.8130, 144.9730),
+    "Russell":         (-37.8120, 144.9680),
+    "Exhibition":      (-37.8100, 144.9700),
+    "Spencer":         (-37.8170, 144.9530),
+    "William":         (-37.8150, 144.9570),
+    "Queen":           (-37.8140, 144.9600),
+    "La Trobe":        (-37.8080, 144.9630),
+    "Little Bourke":   (-37.8120, 144.9600),
+    "Little Collins":  (-37.8140, 144.9590),
+    "Little Lonsdale": (-37.8090, 144.9610),
+    # Transport hubs
+    "Southern Cross":  (-37.8185, 144.9525),
+    "Frankston Station": (-38.1432, 145.1263),
+    # Precincts / areas
+    "Bayside":         (-38.1445, 145.1245),
+    # Inner-suburb arterials
+    "Chapel Street":   (-37.8530, 144.9920),
+    "Smith Street":    (-37.7990, 144.9870),
+    "Sydney Road":     (-37.7660, 144.9610),
+    "High Street":     (-37.8490, 145.0040),
+    "Bridge Road":     (-37.8180, 145.0010),
+    "Swan Street":     (-37.8220, 144.9960),
+    "Victoria Street": (-37.8070, 144.9770),
+    "Brunswick Street": (-37.7980, 144.9780),
+    "St Kilda Road":   (-37.8320, 144.9680),
+}
+
+_STREET_KEYS = sorted(STREET_COORDS.keys(), key=len, reverse=True)
+_STREET_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(s) for s in _STREET_KEYS) + r")\b",
+    re.IGNORECASE,
+)
+
+# Suburb name → (latitude, longitude)
 SUBURB_COORDS: dict[str, tuple[float, float]] = {
     "Melbourne":      (-37.8136,  144.9631),
     "CBD":            (-37.8136,  144.9631),
@@ -99,11 +147,13 @@ _SUBURB_PATTERN = re.compile(
 )
 
 INTENSITY_RULES: list[tuple[int, list[str]]] = [
-    (10, ["homicide", "fatal", "shooting", "machete"]),
-    (7,  ["assault", "stabbing", "weapon", "armed robbery"]),
-    (5,  ["theft", "burglary", "aggravated burglary", "collision"]),
+    (10, ["homicide", "shooting", "firearm"]),
+    (9,  ["stabbing", "armed", "sexual assault"]),
+    (8,  ["aggravated burglary", "brawl", "carjacking"]),
+    (6,  ["fatal", "crash", "collision", "fire"]),
+    (3,  ["theft", "shoplifting", "speeding", "missing"]),
 ]
-DEFAULT_INTENSITY = 3
+DEFAULT_INTENSITY = 4
 
 SUPABASE_TABLE = "incidents"
 
@@ -141,22 +191,50 @@ def _init_supabase() -> Client:
     return create_client(url, key)
 
 
-def extract_suburb(title: str) -> tuple[str, float, float]:
+def _jitter(lat: float, lng: float) -> tuple[float, float]:
+    """Add random offset so co-located incidents spread across the block."""
+    return (
+        lat + random.uniform(-JITTER_RANGE, JITTER_RANGE),
+        lng + random.uniform(-JITTER_RANGE, JITTER_RANGE),
+    )
+
+
+def extract_location(title: str) -> tuple[str, float, float]:
     """
-    Return (suburb, latitude, longitude) for the first suburb found in *title*.
-    Falls back to Melbourne CBD coordinates if no suburb is matched.
+    Resolve the best coordinates for an article title.
+
+    Priority:
+      1. Street-level match (CBD streets like Flinders, Bourke, etc.)
+      2. Suburb-level match (Richmond, Dandenong, etc.)
+      3. Melbourne CBD fallback
+
+    A random jitter (±~220 m) is always applied so same-street or
+    same-suburb incidents don't stack on a single pixel.
     """
-    match = _SUBURB_PATTERN.search(title)
-    if match:
-        name = match.group(1).title()
-        # Normalise case to match dict key (e.g. "box hill" → "Box Hill")
+    # --- 1. Street-level (highest granularity) ---
+    street_match = _STREET_PATTERN.search(title)
+    if street_match:
+        name = street_match.group(1)
+        key = next((k for k in STREET_COORDS if k.lower() == name.lower()), name)
+        coords = STREET_COORDS.get(key, SUBURB_COORDS["Melbourne"])
+        lat, lng = _jitter(coords[0], coords[1])
+        return key, lat, lng
+
+    # --- 2. Suburb-level ---
+    suburb_match = _SUBURB_PATTERN.search(title)
+    if suburb_match:
+        name = suburb_match.group(1).title()
         key = next((k for k in SUBURB_COORDS if k.lower() == name.lower()), name)
         coords = SUBURB_COORDS.get(key, SUBURB_COORDS["Melbourne"])
-        return key, coords[0], coords[1]
-    return "Melbourne", *SUBURB_COORDS["Melbourne"]
+        lat, lng = _jitter(coords[0], coords[1])
+        return key, lat, lng
+
+    # --- 3. Fallback: Melbourne CBD ---
+    lat, lng = _jitter(*SUBURB_COORDS["Melbourne"])
+    return "Melbourne", lat, lng
 
 
-def score_intensity(title: str) -> int:
+def calculate_intensity(title: str) -> int:
     """Return an intensity score (1-10) based on keyword presence in *title*."""
     lower = title.lower()
     for score, keywords in INTENSITY_RULES:
@@ -231,16 +309,17 @@ def fetch_articles() -> list[dict]:
         if not title:
             continue
 
-        suburb, lat, lng = extract_suburb(title)
+        suburb, lat, lng = extract_location(title)
         enriched.append({
             "title": title,
             "link": _es_url_to_public(raw_url),
             "suburb": suburb,
             "location_lat": lat,
             "location_lng": lng,
-            "intensity": score_intensity(title),
-            "source": "VicPol News",
+            "intensity": calculate_intensity(title),
+            "source": "VicPol_Live",
             "is_verified": True,
+            "votes": 0,
         })
 
     log.info("Parsed %d articles from VicPol Breaking News", len(enriched))
@@ -274,6 +353,7 @@ def push_to_supabase(articles: list[dict], client: Optional[Client] = None) -> i
             "intensity": art["intensity"],
             "source": art["source"],
             "is_verified": art["is_verified"],
+            "votes": art["votes"],
         }
 
         try:

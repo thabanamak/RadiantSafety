@@ -36,7 +36,7 @@ export default function NewsSidebar() {
   const outletName = top.find((i) => i.outlet)?.outlet ?? "News";
 
   return (
-    <aside className="pointer-events-auto absolute left-4 top-[68px] z-20 flex w-72 flex-col gap-3 rounded-2xl border border-radiant-border bg-radiant-surface/90 p-3 backdrop-blur-xl shadow-2xl">
+    <aside className="pointer-events-auto absolute left-14 top-[148px] z-20 flex w-72 flex-col gap-3 rounded-2xl border border-radiant-border bg-radiant-surface/90 p-3 backdrop-blur-xl shadow-2xl">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

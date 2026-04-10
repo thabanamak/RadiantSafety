@@ -131,6 +131,7 @@ export function toGeoJSON(reports: MapIncidentPoint[]): GeoJSON.FeatureCollectio
       properties: {
         id: r.id,
         trustScore: r.trustScore,
+        intensity: Math.round(r.trustScore * 10),
         category: r.category,
       },
     })),
