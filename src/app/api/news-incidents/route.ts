@@ -21,9 +21,6 @@ function guessMelbourneArea(text: string) {
 }
 
 export async function GET() {
-  // #region agent log
-  fetch('http://127.0.0.1:7448/ingest/3ab39292-229a-4af6-a271-d2443ee9a3bb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12081b'},body:JSON.stringify({sessionId:'12081b',location:'route.ts:GET',message:'news-incidents route loaded and handler executing',data:{rssParserLoaded:true},runId:'post-fix',hypothesisId:'D',timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const rssUrl =
     process.env.NEWS_RSS_URL ??
     process.env.NEXT_PUBLIC_NEWS_RSS_URL ??

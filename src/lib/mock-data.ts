@@ -1,0 +1,138 @@
+import type { MapIncidentPoint, UserReport, UserReputation } from "./types";
+
+export const MELBOURNE_CENTER = {
+  latitude: -37.8136,
+  longitude: 144.9631,
+  zoom: 13,
+} as const;
+
+export const currentUser: UserReputation = {
+  score: 85,
+  label: "Trusted Reporter",
+  isTrusted: true,
+};
+
+export const userReports: UserReport[] = [
+  {
+    id: "r1",
+    latitude: -37.8095,
+    longitude: 144.9680,
+    trustScore: 0.92,
+    category: "Gang Activity",
+    description: "Group of 6+ intimidating pedestrians near Flinders Lane",
+    verifiedBy: 14,
+    upvotes: 42,
+    downvotes: 2,
+    createdAt: new Date(Date.now() - 3 * 60 * 1000),
+    userId: "u1",
+  },
+  {
+    id: "r2",
+    latitude: -37.8120,
+    longitude: 144.9655,
+    trustScore: 0.78,
+    category: "Unsafe Vibe",
+    description: "Dark alleyway with no foot traffic, felt very unsafe",
+    verifiedBy: 8,
+    upvotes: 18,
+    downvotes: 0,
+    createdAt: new Date(Date.now() - 12 * 60 * 1000),
+    userId: "u2",
+  },
+  {
+    id: "r3",
+    latitude: -37.8150,
+    longitude: 144.9590,
+    trustScore: 0.85,
+    category: "Poor Lighting",
+    description: "Multiple streetlights out along Southbank Promenade",
+    verifiedBy: 11,
+    upvotes: 31,
+    downvotes: 1,
+    createdAt: new Date(Date.now() - 25 * 60 * 1000),
+    userId: "u3",
+  },
+  {
+    id: "r4",
+    latitude: -37.8070,
+    longitude: 144.9710,
+    trustScore: 0.65,
+    category: "Theft",
+    description: "Phone snatched from hand near Southern Cross Station",
+    verifiedBy: 5,
+    upvotes: 27,
+    downvotes: 3,
+    createdAt: new Date(Date.now() - 45 * 60 * 1000),
+    userId: "u4",
+  },
+  {
+    id: "r5",
+    latitude: -37.8110,
+    longitude: 144.9720,
+    trustScore: 0.55,
+    category: "Suspicious Activity",
+    description: "Individual following people through Queen Victoria Market",
+    verifiedBy: 3,
+    upvotes: 12,
+    downvotes: 4,
+    createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    userId: "u5",
+  },
+  {
+    id: "r6",
+    latitude: -37.8180,
+    longitude: 144.9560,
+    trustScore: 0.72,
+    category: "Drug Activity",
+    description: "Open drug use near Crown Casino underpass",
+    verifiedBy: 9,
+    upvotes: 35,
+    downvotes: 2,
+    createdAt: new Date(Date.now() - 90 * 60 * 1000),
+    userId: "u6",
+  },
+  {
+    id: "r7",
+    latitude: -37.8060,
+    longitude: 144.9630,
+    trustScore: 0.88,
+    category: "Harassment",
+    description: "Verbal harassment reported near Melbourne Central",
+    verifiedBy: 7,
+    upvotes: 22,
+    downvotes: 1,
+    createdAt: new Date(Date.now() - 120 * 60 * 1000),
+    userId: "u7",
+  },
+  {
+    id: "r8",
+    latitude: -37.8100,
+    longitude: 144.9600,
+    trustScore: 0.60,
+    category: "Vandalism",
+    description: "Car windows smashed on Little Collins Street",
+    verifiedBy: 4,
+    upvotes: 15,
+    downvotes: 2,
+    createdAt: new Date(Date.now() - 180 * 60 * 1000),
+    userId: "u8",
+  },
+];
+
+export function toGeoJSON(reports: MapIncidentPoint[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: reports.map((r) => ({
+      type: "Feature" as const,
+      geometry: {
+        type: "Point" as const,
+        coordinates: [r.longitude, r.latitude],
+      },
+      properties: {
+        id: r.id,
+        trustScore: r.trustScore,
+        category: r.category,
+      },
+    })),
+  };
+}
