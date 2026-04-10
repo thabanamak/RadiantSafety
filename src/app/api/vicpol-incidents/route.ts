@@ -171,18 +171,18 @@ export async function GET() {
     const data = (await res.json()) as { hits: { hits: EsHit[] } };
     const hits = data?.hits?.hits ?? [];
 
-    const items: VicPolIncident[] = hits
-      .map((hit, idx) => {
-        const src = hit._source;
-        const title = src.title?.[0] ?? "";
-        const rawUrl = src.url?.[0] ?? "";
-        if (!title) return null;
+    const items: VicPolIncident[] = hits.flatMap((hit, idx) => {
+      const src = hit._source;
+      const title = src.title?.[0] ?? "";
+      const rawUrl = src.url?.[0] ?? "";
+      if (!title) return [];
 
-        const intensity = calculateIntensity(title);
-        const loc = resolveLocation(title);
-        const slug = rawUrl.replace(/^\/site-\d+\//, "/");
+      const intensity = calculateIntensity(title);
+      const loc = resolveLocation(title);
+      const slug = rawUrl.replace(/^\/site-\d+\//, "/");
 
-        return {
+      return [
+        {
           id: rawUrl || String(idx),
           title,
           url: `${VICPOL_BASE}${slug}`,
@@ -191,9 +191,9 @@ export async function GET() {
           longitude: loc.longitude,
           intensity,
           trustScore: intensity / 10,
-        } satisfies VicPolIncident;
-      })
-      .filter((i): i is VicPolIncident => i !== null);
+        } satisfies VicPolIncident,
+      ];
+    });
 
     return NextResponse.json({ items });
   } catch (e) {
