@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Map, { Layer, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps } from "react-map-gl/mapbox";
 import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
+import type { MapIncidentPoint } from "@/lib/types";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
@@ -34,9 +35,10 @@ const heatmapLayer: LayerProps = {
 
 interface RadiantMapProps {
   onFlyTo?: { latitude: number; longitude: number; zoom?: number } | null;
+  reports?: MapIncidentPoint[];
 }
 
-export default function RadiantMap({ onFlyTo }: RadiantMapProps) {
+export default function RadiantMap({ onFlyTo, reports }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [viewState, setViewState] = useState({
     latitude: MELBOURNE_CENTER.latitude as number,
@@ -46,7 +48,7 @@ export default function RadiantMap({ onFlyTo }: RadiantMapProps) {
     pitch: 30,
   });
 
-  const geojson = toGeoJSON(userReports);
+  const geojson = toGeoJSON(reports ?? userReports);
 
   useEffect(() => {
     if (!onFlyTo || !mapRef.current) return;

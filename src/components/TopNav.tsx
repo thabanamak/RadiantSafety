@@ -12,6 +12,8 @@ export interface AuthUser {
   email: string;
 }
 
+export type DashboardTab = "pulse" | "news";
+
 interface TopNavProps {
   reputation: UserReputation;
   user: AuthUser | null;
