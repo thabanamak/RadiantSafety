@@ -95,7 +95,7 @@ export default function SafetyChatbot({ isOpen, onClose }: SafetyChatbotProps) {
   };
 
   return (
-    <div className="pointer-events-auto fixed bottom-6 right-24 z-50 flex h-[520px] w-96 flex-col rounded-2xl border border-radiant-border bg-radiant-surface/95 shadow-2xl backdrop-blur-xl">
+    <div className="pointer-events-auto fixed bottom-6 right-6 z-50 flex h-[640px] w-[440px] flex-col rounded-2xl border border-radiant-border bg-radiant-surface/95 shadow-2xl backdrop-blur-xl">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-radiant-border px-4 py-3">
         <div className="flex items-center gap-2.5">
