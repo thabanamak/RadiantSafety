@@ -251,21 +251,24 @@ export default function Dashboard() {
           ) {
             return;
           }
+          const reportId = row.id;
+          const upvotes = row.upvotes;
+          const downvotes = row.downvotes;
           const trustPoints =
             typeof row.trust === "number" && Number.isFinite(row.trust)
               ? row.trust
-              : computeTrustPoints(row.upvotes, row.downvotes);
+              : computeTrustPoints(upvotes, downvotes);
           const trustLabel =
             typeof row.trust_label === "string" && row.trust_label.trim() !== ""
               ? row.trust_label
               : getTrustDisplayText(trustPoints);
           setSubmittedUserReports((prev) =>
             prev.map((r) =>
-              r.id === row.id
+              r.id === reportId
                 ? {
                     ...r,
-                    upvotes: row.upvotes,
-                    downvotes: row.downvotes,
+                    upvotes,
+                    downvotes,
                     trustPoints,
                     trustLabel,
                   }
@@ -506,23 +509,36 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const vicpolMapPoints: MapIncidentPoint[] = vicpolItems
-    .filter((i) => i.latitude != null && i.longitude != null)
-    .map((i) => ({
-      id: i.id,
-      latitude: i.latitude as number,
-      longitude: i.longitude as number,
-      intensity: i.intensity,
-      category: "Suspicious Activity",
-    }));
+  const vicpolMapPoints: MapIncidentPoint[] = useMemo(
+    () =>
+      vicpolItems
+        .filter((i) => i.latitude != null && i.longitude != null)
+        .map((i) => ({
+          id: i.id,
+          latitude: i.latitude as number,
+          longitude: i.longitude as number,
+          intensity: i.intensity,
+          category: "Suspicious Activity",
+        })),
+    [vicpolItems]
+  );
 
-  const supabaseMapPoints: MapIncidentPoint[] = supabaseItems.map((i) => ({
-    id: i.id,
-    latitude: i.location_lat,
-    longitude: i.location_lng,
-    intensity: i.intensity,
-    category: "Suspicious Activity",
-  }));
+  const supabaseMapPoints: MapIncidentPoint[] = useMemo(
+    () =>
+      supabaseItems.map((i) => ({
+        id: i.id,
+        latitude: i.location_lat,
+        longitude: i.location_lng,
+        intensity: i.intensity,
+        category: "Suspicious Activity",
+      })),
+    [supabaseItems]
+  );
+
+  const officialCombinedMapPoints = useMemo(
+    () => [...supabaseMapPoints, ...vicpolMapPoints],
+    [supabaseMapPoints, vicpolMapPoints]
+  );
 
   const handlePinLocation = useCallback((pin: PinLocation | null) => {
     if (!pin) {
@@ -661,14 +677,24 @@ export default function Dashboard() {
     []
   );
 
-  const userReportedMapPoints: MapIncidentPoint[] = displayedUserReports.map((r) => ({
-    id: r.id,
-    latitude: r.latitude,
-    longitude: r.longitude,
-    intensity: getSeverityForCategory(r.category),
-    trustPoints: r.trustPoints,
-    category: r.category,
-  }));
+  const userReportedMapPoints: MapIncidentPoint[] = useMemo(
+    () =>
+      displayedUserReports.map((r) => ({
+        id: r.id,
+        latitude: r.latitude,
+        longitude: r.longitude,
+        intensity: getSeverityForCategory(r.category),
+        trustPoints: r.trustPoints,
+        category: r.category,
+      })),
+    [displayedUserReports]
+  );
+
+  const reportsForRadiantMap = useMemo((): MapIncidentPoint[] => {
+    if (activeIncidentTab === "user-reported") return userReportedMapPoints;
+    if (activeIncidentTab === "official") return officialCombinedMapPoints;
+    return supabaseMapPoints;
+  }, [activeIncidentTab, userReportedMapPoints, officialCombinedMapPoints, supabaseMapPoints]);
 
   const handleLocateMe = useCallback(() => {
     if (!navigator.geolocation) return;
@@ -730,7 +756,7 @@ export default function Dashboard() {
 
     // Score = sum of incident intensities within 300 m
     let score = 0;
-    const allPoints = [...supabaseMapPoints, ...vicpolMapPoints];
+    const allPoints = officialCombinedMapPoints;
     for (const pt of allPoints) {
       const dLat = toRad(pt.latitude - latitude);
       const dLng = toRad(pt.longitude - longitude);
@@ -743,7 +769,7 @@ export default function Dashboard() {
 
     // Threshold: combined intensity > 15 within 300 m triggers the nudge
     setShowHotspotNudge(score > 15);
-  }, [userCoords, supabaseMapPoints, vicpolMapPoints, showSafeWalk]);
+  }, [userCoords, officialCombinedMapPoints, showSafeWalk]);
 
   const requestContextualSafeRoute = useCallback(async () => {
     if (!selectedDestination) return;
@@ -1001,12 +1027,6 @@ export default function Dashboard() {
     setRouteInfo(null);
   }, []);
 
-  function activeMapPoints(): MapIncidentPoint[] {
-    if (activeIncidentTab === "user-reported") return userReportedMapPoints;
-    if (activeIncidentTab === "official") return [...supabaseMapPoints, ...vicpolMapPoints];
-    return supabaseMapPoints;
-  }
-
   const contextualDestinationMarker = useMemo(() => {
     if (!selectedDestination) return null;
     const [lng, lat] = selectedDestination.coordinates;
@@ -1061,7 +1081,7 @@ export default function Dashboard() {
       <div className="absolute inset-0 z-0">
         <RadiantMap
           onFlyTo={flyTarget}
-          reports={activeMapPoints()}
+          reports={reportsForRadiantMap}
           onCenterChange={setMapCenter}
           dropPinMode={dropPinMode}
           onPinDropped={handlePinDropped}

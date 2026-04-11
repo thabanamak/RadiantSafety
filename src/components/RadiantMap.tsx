@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Map, { Layer, Marker, Popup, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
 import { cn } from "@/lib/cn";
@@ -20,6 +20,27 @@ import { zoomScaledMarkerDiameterPx } from "@/lib/map-marker-zoom";
 import type { PoliceStation } from "@/lib/vic-police-stations";
 import type { HealthFacility } from "@/lib/vic-health-facilities";
 
+/** Text-only label above police / health markers on hover. */
+function MapFacilityHoverLabel({
+  title,
+  subtitle,
+}: {
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div
+      className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 max-w-[min(260px,calc(100vw-40px))] -translate-x-1/2 rounded-lg border border-white/12 bg-neutral-950/95 px-3 py-2 text-center opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
+      role="tooltip"
+    >
+      <p className="break-words text-[13px] font-semibold leading-snug tracking-tight text-white">{title}</p>
+      {subtitle ? (
+        <p className="mt-0.5 break-words text-[11px] leading-snug text-neutral-400">{subtitle}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export interface FriendLocation {
   id: string;
   lat: number;
@@ -35,44 +56,51 @@ const heatmapLayer: LayerProps = {
   source: "reports",
   maxzoom: 22,
   paint: {
+    // Low/mid stay light on the field; 8–10 ramp hard so serious clusters still max out — merges with weak points stay in amber/orange
     "heatmap-weight": [
       "interpolate", ["linear"], ["get", "intensity"],
-      1, 0.088,
-      10, 0.97,
+      1, 0.04,
+      3, 0.07,
+      4, 0.1,
+      5, 0.17,
+      6, 0.25,
+      7, 0.34,
+      8, 0.54,
+      9, 0.74,
+      10, 0.92,
     ],
-    // Intensity keeps climbing as you zoom in so the flow stays rich
     "heatmap-intensity": [
       "interpolate", ["linear"], ["zoom"],
-      10, 0.53,
-      15, 1.5,
-      18, 2.23,
+      10, 0.52,
+      15, 1.28,
+      18, 1.88,
     ],
-    // Radius grows continuously — never shrinks back to dots
     "heatmap-radius": [
       "interpolate", ["linear"], ["zoom"],
-      10, 20,
-      13, 45,
-      15, 78,
-      18, 153,
+      10, 22,
+      13, 46,
+      15, 80,
+      18, 136,
     ],
+    // Long amber/orange mid-band (diluted merge), steep red only at top density (tight serious stacks)
     "heatmap-color": [
       "interpolate",
       ["linear"],
       ["heatmap-density"],
       0,    "rgba(0,0,0,0)",
-      0.05, "rgba(255,255,180,0)",
-      0.15, "rgba(255,255,120,0.32)",
-      0.3,  "rgba(255,220,60,0.53)",
-      0.45, "rgba(255,170,20,0.67)",
-      0.6,  "rgba(240,100,10,0.85)",
-      0.75, "rgba(210,40,0,0.96)",
-      0.9,  "rgba(160,10,0,0.98)",
-      1.0,  "rgba(100,0,0,0.98)",
+      0.05, "rgba(255,255,200,0)",
+      0.22, "rgba(255,248,130,0.28)",
+      0.4,  "rgba(255,215,65,0.48)",
+      0.56, "rgba(255,175,32,0.62)",
+      0.68, "rgba(255,125,18,0.74)",
+      0.78, "rgba(248,80,12,0.84)",
+      0.86, "rgba(215,38,6,0.91)",
+      0.93, "rgba(165,10,2,0.96)",
+      1.0,  "rgba(98,0,0,0.98)",
     ],
-    // ~15–20% stronger than previous midpoint
     "heatmap-opacity": [
       "interpolate", ["linear"], ["zoom"],
-      10, 0.82,
+      10, 0.8,
       18, 0.76,
     ],
   },
@@ -82,11 +110,12 @@ function mapCenterMeaningfullyChanged(
   a: { latitude: number; longitude: number; zoom: number },
   b: { latitude: number; longitude: number; zoom: number }
 ): boolean {
-  const eps = 1e-7;
+  /** ~1.1 m — avoids spamming parent on sub-pixel map jitter (was 1e-7). */
+  const epsLatLng = 1e-5;
   return (
-    Math.abs(a.latitude - b.latitude) > eps ||
-    Math.abs(a.longitude - b.longitude) > eps ||
-    Math.abs(a.zoom - b.zoom) > 1e-5
+    Math.abs(a.latitude - b.latitude) > epsLatLng ||
+    Math.abs(a.longitude - b.longitude) > epsLatLng ||
+    Math.abs(a.zoom - b.zoom) > 1e-4
   );
 }
 
@@ -204,6 +233,47 @@ export default function RadiantMap({
     longitude: number;
     zoom: number;
   } | null>(null);
+  /** Only `setMapZoom` when zoom moves enough — Mapbox emits tiny float drift each frame and causes update-depth loops. */
+  const lastReportedMapZoomRef = useRef<number>(MELBOURNE_CENTER.zoom as number);
+  // #region agent log
+  const agentDbgMoveCountRef = useRef(0);
+  const agentDbgLogNRef = useRef(0);
+  const agentDbgLog = (
+    hypothesisId: string,
+    location: string,
+    message: string,
+    data: Record<string, unknown>
+  ) => {
+    if (agentDbgLogNRef.current >= 120) return;
+    agentDbgLogNRef.current += 1;
+    fetch("http://127.0.0.1:7620/ingest/87f954c8-2ca9-4bcd-bcc6-cfcef546d663", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "20c062" },
+      body: JSON.stringify({
+        sessionId: "20c062",
+        runId: "pre-fix",
+        hypothesisId,
+        location,
+        message,
+        data: { ...data, seq: agentDbgLogNRef.current },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  };
+  const agentDbgPoliceNRef = useRef(0);
+  const agentDbgHealthNRef = useRef(0);
+  agentDbgPoliceNRef.current = policeStations.length;
+  agentDbgHealthNRef.current = healthFacilities.length;
+
+  useEffect(() => {
+    agentDbgLog("H4", "RadiantMap.tsx:mount", "RadiantMap mounted", {
+      initialZoom: initialViewState.zoom,
+      lastReportedMapZoomRef: lastReportedMapZoomRef.current,
+      policeN: agentDbgPoliceNRef.current,
+      healthN: agentDbgHealthNRef.current,
+    });
+  }, []);
+  // #endregion
   /** Uncontrolled viewport — do not mirror Mapbox viewState in React (avoids move/setState feedback loops). */
   const initialViewState = useRef({
     latitude: MELBOURNE_CENTER.latitude as number,
@@ -234,9 +304,11 @@ export default function RadiantMap({
     };
   }, [droppedPin]);
 
-  const mapPoints =
-    reports ?? userReports.map(userReportToMapPoint);
-  const geojson = toGeoJSON(mapPoints);
+  const mapPoints = useMemo(
+    () => reports ?? userReports.map(userReportToMapPoint),
+    [reports]
+  );
+  const geojson = useMemo(() => toGeoJSON(mapPoints), [mapPoints]);
 
   const [reportPopup, setReportPopup] = useState<{
     longitude: number;
@@ -306,7 +378,35 @@ export default function RadiantMap({
 
   const onMove = useCallback(
     (evt: { viewState: { latitude: number; longitude: number; zoom: number } }) => {
-      setMapZoom(evt.viewState.zoom);
+      const z = evt.viewState.zoom;
+      // #region agent log
+      agentDbgMoveCountRef.current += 1;
+      const zDiff = Math.abs(z - lastReportedMapZoomRef.current);
+      const willSetZoom = zDiff > 0.007;
+      if (agentDbgLogNRef.current < 120) {
+        agentDbgLog("H1", "RadiantMap.tsx:onMove", "onMove tick", {
+          z,
+          lastZoomRef: lastReportedMapZoomRef.current,
+          zDiff,
+          willSetZoom,
+          moveTick: agentDbgMoveCountRef.current,
+          policeN: agentDbgPoliceNRef.current,
+          healthN: agentDbgHealthNRef.current,
+        });
+      }
+      // #endregion
+      if (willSetZoom) {
+        // #region agent log
+        agentDbgLog("H2", "RadiantMap.tsx:onMove:setZoom", "setMapZoom path", {
+          z,
+          prevRef: lastReportedMapZoomRef.current,
+          policeN: agentDbgPoliceNRef.current,
+          healthN: agentDbgHealthNRef.current,
+        });
+        // #endregion
+        lastReportedMapZoomRef.current = z;
+        setMapZoom(z);
+      }
       if (!onCenterChange) return;
       const vs = evt.viewState;
       const center = {
@@ -316,6 +416,14 @@ export default function RadiantMap({
       };
       const last = lastReportedCenterRef.current;
       if (last && !mapCenterMeaningfullyChanged(last, center)) return;
+      // #region agent log
+      agentDbgLog("H3", "RadiantMap.tsx:onMove:center", "onCenterChange firing", {
+        lat: center.latitude,
+        lng: center.longitude,
+        zoom: center.zoom,
+        hadLast: Boolean(last),
+      });
+      // #endregion
       lastReportedCenterRef.current = center;
       onCenterChange(center);
     },
@@ -612,19 +720,21 @@ export default function RadiantMap({
             longitude={ps.longitude}
             anchor="center"
           >
-            <div
-              className="flex shrink-0 items-center justify-center rounded-full shadow-lg ring-2 ring-blue-950/70"
-              style={{
-                width: d,
-                height: d,
-                backgroundColor: "#00264d",
-                boxShadow: "0 2px 10px rgba(0, 18, 51, 0.55)",
-              }}
-              title={ps.name}
-              role="img"
-              aria-label={`Police station: ${ps.name}`}
-            >
-              <VicPoliceMapIcon sizePx={iconPx} />
+            <div className="group relative z-30 inline-flex flex-col items-center">
+              <MapFacilityHoverLabel title={ps.name} subtitle={ps.suburb} />
+              <div
+                className="flex shrink-0 cursor-default items-center justify-center rounded-full shadow-lg ring-2 ring-blue-950/70"
+                style={{
+                  width: d,
+                  height: d,
+                  backgroundColor: "#00264d",
+                  boxShadow: "0 2px 10px rgba(0, 18, 51, 0.55)",
+                }}
+                role="img"
+                aria-label={`Police station: ${ps.name}`}
+              >
+                <VicPoliceMapIcon sizePx={iconPx} />
+              </div>
             </div>
           </Marker>
         );
@@ -635,6 +745,7 @@ export default function RadiantMap({
         const d = zoomScaledMarkerDiameterPx(mapZoom);
         const iconPx = Math.max(7, Math.round(d * 0.5));
         const isHospital = hf.kind === "hospital";
+        const kindLabel = isHospital ? "Hospital" : "Medical centre";
         return (
           <Marker
             key={hf.id}
@@ -642,22 +753,24 @@ export default function RadiantMap({
             longitude={hf.longitude}
             anchor="center"
           >
-            <div
-              className={cn(
-                "flex shrink-0 items-center justify-center rounded-full shadow-md",
-                isHospital ? "ring-2 ring-slate-400/60" : "ring-2 ring-red-500/70"
-              )}
-              style={{
-                width: d,
-                height: d,
-                backgroundColor: "#ffffff",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-              }}
-              title={hf.name}
-              role="img"
-              aria-label={`${isHospital ? "Hospital" : "Medical centre"}: ${hf.name}`}
-            >
-              <MedicalCrossIcon sizePx={iconPx} />
+            <div className="group relative z-30 inline-flex flex-col items-center">
+              <MapFacilityHoverLabel title={hf.name} subtitle={`${kindLabel} · ${hf.suburb}`} />
+              <div
+                className={cn(
+                  "flex shrink-0 cursor-default items-center justify-center rounded-full shadow-md",
+                  isHospital ? "ring-2 ring-slate-400/60" : "ring-2 ring-red-500/70"
+                )}
+                style={{
+                  width: d,
+                  height: d,
+                  backgroundColor: "#ffffff",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+                }}
+                role="img"
+                aria-label={`${kindLabel}: ${hf.name}`}
+              >
+                <MedicalCrossIcon sizePx={iconPx} />
+              </div>
             </div>
           </Marker>
         );

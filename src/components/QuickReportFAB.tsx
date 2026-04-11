@@ -12,6 +12,7 @@ import {
   ImagePlus,
   Loader2,
   Shield,
+  NotebookPen,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
@@ -248,25 +249,8 @@ export default function QuickReportFAB({
       <div className="pointer-events-auto fixed bottom-6 right-6 z-50">
         {menuOpen && (
           <>
-            {/* Safe Walk — top (above incident report) */}
-            <div className="group absolute right-0 bottom-0 -translate-y-[144px]">
-              <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
-                <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
-                  Safe Walk
-                  <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 border border-radiant-border border-t-0 border-l-0 bg-black/90" />
-                </div>
-              </div>
-              <button
-                onClick={() => { setMenuOpen(false); onSafeWalkPress?.(); }}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-green-500/40 bg-radiant-surface/95 shadow-lg backdrop-blur-xl transition-transform hover:scale-105 active:scale-95"
-                aria-label="Safe Walk timer"
-              >
-                <Shield className="h-5 w-5 text-green-400" />
-              </button>
-            </div>
-
-            {/* Incident Report */}
-            <div className="group absolute right-0 bottom-0 -translate-y-[72px]">
+            {/* Incident report — midpoint on the diagonal between SOS (-72,0) and Safe Walk (0,-72) */}
+            <div className="group absolute right-0 bottom-0 z-[1] -translate-x-[44px] -translate-y-[44px] transition-transform duration-300 ease-out">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
                   Incident Report
@@ -282,15 +266,32 @@ export default function QuickReportFAB({
                   setMenuOpen(false);
                   setIsOpen(true);
                 }}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-radiant-border bg-radiant-surface/95 shadow-lg backdrop-blur-xl transition-transform hover:scale-105 active:scale-95"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-amber-500/35 bg-gradient-to-br from-amber-950/50 via-radiant-surface/95 to-radiant-surface/90 shadow-lg shadow-amber-950/20 ring-1 ring-amber-200/10 backdrop-blur-xl transition-transform hover:scale-105 hover:border-amber-400/45 hover:shadow-amber-900/25 active:scale-95"
                 aria-label="Incident report"
               >
-                <AlertTriangle className="h-5 w-5 text-radiant-red" />
+                <NotebookPen className="h-5 w-5 text-amber-100" strokeWidth={2} />
+              </button>
+            </div>
+
+            {/* Safe Walk — slot above main FAB (was incident report) */}
+            <div className="group absolute right-0 bottom-0 z-[1] -translate-y-[72px] transition-transform duration-300 ease-out">
+              <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                  Safe Walk
+                  <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 border border-radiant-border border-t-0 border-l-0 bg-black/90" />
+                </div>
+              </div>
+              <button
+                onClick={() => { setMenuOpen(false); onSafeWalkPress?.(); }}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-500/45 bg-radiant-surface/95 shadow-lg shadow-emerald-950/30 backdrop-blur-xl transition-transform hover:scale-105 hover:border-emerald-400/55 active:scale-95"
+                aria-label="Safe Walk timer"
+              >
+                <Shield className="h-5 w-5 text-emerald-400" />
               </button>
             </div>
 
             {/* SOS */}
-            <div className="group absolute right-0 bottom-0 -translate-x-[72px]">
+            <div className="group absolute right-0 bottom-0 z-[1] -translate-x-[72px] transition-transform duration-300 ease-out">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
                   SOS
@@ -314,15 +315,25 @@ export default function QuickReportFAB({
         <button
           onClick={() => setMenuOpen((p) => !p)}
           className={cn(
-            "flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
+            "relative z-[2] flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all duration-300 hover:scale-105 active:scale-95",
             dropPinActive
               ? "animate-pulse bg-amber-500 shadow-amber-500/40 hover:shadow-amber-500/60"
+              : menuOpen
+              ? "border border-white/15 bg-radiant-surface/95 text-gray-200 shadow-black/40 backdrop-blur-xl hover:bg-radiant-card"
               : "bg-radiant-red shadow-red-500/30 hover:shadow-red-500/50"
           )}
-          aria-label={dropPinActive ? "Drop pin on map — tap to return" : "Open report menu"}
+          aria-label={
+            dropPinActive
+              ? "Drop pin on map — tap to return"
+              : menuOpen
+              ? "Close menu"
+              : "Open report menu"
+          }
         >
           {dropPinActive ? (
             <MapPin className="h-6 w-6 text-white" />
+          ) : menuOpen ? (
+            <X className="h-6 w-6" />
           ) : (
             <AlertTriangle className="h-6 w-6 text-white" />
           )}

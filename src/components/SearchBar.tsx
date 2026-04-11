@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { Search, X, MapPin, Building2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
@@ -20,6 +20,8 @@ interface SearchBarProps {
     placeName: string;
     center: [number, number];
   }) => void;
+  /** Rendered inside the search field row, right of the input (e.g. directions toggle). */
+  endAdornment?: ReactNode;
 }
 
 function highlightMatch(text: string, query: string) {
@@ -40,7 +42,7 @@ function poiIcon(featureType: string) {
   return <MapPin className="h-4 w-4 text-gray-400" />;
 }
 
-export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
+export default function SearchBar({ mapCenter, onSelectArea, endAdornment }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [results, setResults] = useState<SearchSuggestion[]>([]);
@@ -200,8 +202,9 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
           placeholder="Stations, malls, landmarks, suburbs, or streets…"
           autoComplete="off"
           spellCheck={false}
-          className="w-full bg-transparent text-sm font-medium text-gray-100 placeholder-gray-500 outline-none"
+          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-gray-100 placeholder-gray-500 outline-none"
         />
+        {endAdornment}
         {query && (
           <button
             onClick={() => { setQuery(""); setResults([]); setActiveIndex(-1); inputRef.current?.focus(); }}

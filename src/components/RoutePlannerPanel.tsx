@@ -83,7 +83,7 @@ export default function RoutePlannerPanel({
               <Navigation className="h-4 w-4 text-cyan-400" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Directions planner</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Directions</p>
               <p className="mt-0.5 text-xs text-zinc-400">
                 Pick two spots (stations, malls, landmarks, suburbs, or street addresses). Start defaults to your
                 location.
@@ -94,7 +94,7 @@ export default function RoutePlannerPanel({
             type="button"
             onClick={onClose}
             className="shrink-0 rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
-            aria-label="Close planner"
+            aria-label="Close directions"
           >
             <X className="h-5 w-5" />
           </button>

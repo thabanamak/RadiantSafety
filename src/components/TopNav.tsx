@@ -123,8 +123,32 @@ export default function TopNav({
 
       <div className="relative z-10 flex flex-col items-center gap-3 px-5">
         <div className="flex w-full max-w-2xl flex-col gap-1.5">
-          <SearchBar mapCenter={mapCenter} onSelectArea={onSearchSelectArea} />
-          <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2 sm:gap-x-6">
+          <SearchBar
+            mapCenter={mapCenter}
+            onSelectArea={onSearchSelectArea}
+            endAdornment={
+              onDirectionsModeChange ? (
+                <button
+                  type="button"
+                  onClick={() => onDirectionsModeChange(!directionsMode)}
+                  aria-pressed={directionsMode}
+                  aria-label={directionsMode ? "Exit directions" : "Open directions"}
+                  className={cn(
+                    "flex shrink-0 items-center gap-1.5 border-l border-white/10 py-1 pl-2.5 text-[11px] font-semibold transition-colors sm:gap-2 sm:pl-3 sm:text-xs",
+                    directionsMode
+                      ? "text-cyan-300"
+                      : "text-gray-400 hover:text-gray-200"
+                  )}
+                >
+                  <Navigation className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">
+                    {directionsMode ? "Exit" : "Directions"}
+                  </span>
+                </button>
+              ) : null
+            }
+          />
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 sm:gap-x-6">
             <div className="flex items-center gap-2">
               <Shield className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden />
               <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
@@ -158,51 +182,37 @@ export default function TopNav({
           </div>
         </div>
 
-        {onDirectionsModeChange && (
-          <button
-            type="button"
-            onClick={() => onDirectionsModeChange(!directionsMode)}
-            className={cn(
-              "flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition-all",
-              directionsMode
-                ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200 shadow-md shadow-cyan-500/20"
-                : "border-white/15 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white"
-            )}
-          >
-            <Navigation className="h-3.5 w-3.5" />
-            {directionsMode ? "Exit directions planner" : "Directions planner"}
-          </button>
-        )}
-
-        {/* Incident tab pills — hidden when routing is active */}
+        {/* Incident tab pills — below search; compact width (not full search bar) */}
         {!routingActive && (
-          <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-1 backdrop-blur-md shadow-lg transition-opacity duration-300">
-            <button
-              type="button"
-              onClick={() => onIncidentTabChange("official")}
-              className={cn(
-                "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
-                activeIncidentTab === "official"
-                  ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
-                  : "text-gray-400 hover:text-gray-200"
-              )}
-            >
-              <ShieldAlert className="h-3.5 w-3.5" />
-              Official Incidents
-            </button>
-            <button
-              type="button"
-              onClick={() => onIncidentTabChange("user-reported")}
-              className={cn(
-                "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
-                activeIncidentTab === "user-reported"
-                  ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
-                  : "text-gray-400 hover:text-gray-200"
-              )}
-            >
-              <Users className="h-3.5 w-3.5" />
-              User Reported
-            </button>
+          <div className="flex justify-center">
+            <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-1 backdrop-blur-md shadow-lg transition-opacity duration-300">
+              <button
+                type="button"
+                onClick={() => onIncidentTabChange("official")}
+                className={cn(
+                  "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
+                  activeIncidentTab === "official"
+                    ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
+                    : "text-gray-400 hover:text-gray-200"
+                )}
+              >
+                <ShieldAlert className="h-3.5 w-3.5" />
+                Official Incidents
+              </button>
+              <button
+                type="button"
+                onClick={() => onIncidentTabChange("user-reported")}
+                className={cn(
+                  "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
+                  activeIncidentTab === "user-reported"
+                    ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
+                    : "text-gray-400 hover:text-gray-200"
+                )}
+              >
+                <Users className="h-3.5 w-3.5" />
+                User Reported
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -214,12 +224,10 @@ function AccountDropdown({
   user,
   reputation,
   onLogout,
-  onViewPastReports,
 }: {
   user: AuthUser;
   reputation: UserReputation;
   onLogout: () => void;
-  onViewPastReports: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
