@@ -46,8 +46,8 @@ export default function TopNav({
 }: TopNavProps) {
   return (
     <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
-      {/* Row 1: Branding + Right controls */}
-      <div className="flex items-center gap-4 px-5 py-3">
+      {/* Row 1 stacks above row 2 so the account menu (which extends downward) is not covered by the search bar */}
+      <div className="relative z-50 flex items-center gap-4 px-5 py-3">
         {/* Left: Branding + Reputation */}
         <div className="flex shrink-0 items-center gap-3">
           {user && (
@@ -112,7 +112,7 @@ export default function TopNav({
       </div>
 
       {/* Row 2: Big centered search */}
-      <div className="flex flex-col items-center gap-3 px-5">
+      <div className="relative z-10 flex flex-col items-center gap-3 px-5">
         <SearchBar
           mapCenter={mapCenter}
           onSelectArea={onSearchSelectArea}
@@ -203,7 +203,7 @@ function AccountDropdown({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl">
+        <div className="absolute right-0 top-full z-[60] mt-1.5 w-52 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl">
           <div className="px-3 py-2">
             <p className="text-xs font-semibold text-gray-200">{user.name}</p>
             <p className="text-[11px] text-gray-500">{user.email}</p>
