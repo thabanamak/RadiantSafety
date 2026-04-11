@@ -19,6 +19,8 @@ import type { FriendLocation } from "@/components/RadiantMap";
 import SOSController from "@/features/sos/SOSController";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
+import { VIC_HEALTH_FACILITIES } from "@/lib/vic-health-facilities";
+import { VIC_POLICE_STATIONS } from "@/lib/vic-police-stations";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
@@ -110,6 +112,9 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
 
   // Directions — active route for the map; populated by DirectionsController
   const [activeRoute, setActiveRoute] = useState<{ geometry: GeoJSON.LineString } | null>(null);
+
+  const [showPoliceOnMap, setShowPoliceOnMap] = useState(true);
+  const [showHealthFacilitiesOnMap, setShowHealthFacilitiesOnMap] = useState(true);
 
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
@@ -294,6 +299,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           sosAlerts={sosMapAlerts}
           friendLocations={friendLocations}
           activeRoute={activeRoute}
+          policeStations={showPoliceOnMap ? VIC_POLICE_STATIONS : []}
+          healthFacilities={showHealthFacilitiesOnMap ? VIC_HEALTH_FACILITIES : []}
         />
       </div>
 
@@ -332,6 +339,10 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           onLoginClick={() => {}}
           onSignupClick={() => {}}
           onLogout={handleLogout}
+          showPoliceOnMap={showPoliceOnMap}
+          onShowPoliceOnMapChange={setShowPoliceOnMap}
+          showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
+          onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
         />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}

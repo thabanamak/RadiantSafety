@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Map, { Layer, Marker, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
+import { cn } from "@/lib/cn";
 import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
+import { MedicalCrossIcon } from "@/components/icons/MedicalCrossIcon";
+import { VicPoliceMapIcon } from "@/components/icons/VicPoliceMapIcon";
+import { zoomScaledMarkerDiameterPx } from "@/lib/map-marker-zoom";
+import type { PoliceStation } from "@/lib/vic-police-stations";
+import type { HealthFacility } from "@/lib/vic-health-facilities";
 
 export interface FriendLocation {
   id: string;
@@ -138,6 +144,10 @@ interface RadiantMapProps {
   friendLocations?: FriendLocation[];
   /** Active route geometry from Directions feature — rendered as a blue polyline */
   activeRoute?: { geometry: GeoJSON.LineString } | null;
+  /** Victoria Police stations — blue circular markers */
+  policeStations?: PoliceStation[];
+  /** Hospitals & medical centres — white circle + red cross; size follows zoom */
+  healthFacilities?: HealthFacility[];
 }
 
 export default function RadiantMap({
@@ -152,6 +162,8 @@ export default function RadiantMap({
   sosAlerts = [],
   friendLocations = [],
   activeRoute,
+  policeStations = [],
+  healthFacilities = [],
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const lastReportedCenterRef = useRef<{
@@ -417,6 +429,68 @@ export default function RadiantMap({
           </div>
         </Marker>
       ))}
+
+      {/* Police stations — dark blue discs, white badge; size tracks map zoom */}
+      {policeStations.map((ps) => {
+        const d = zoomScaledMarkerDiameterPx(viewState.zoom);
+        const iconPx = Math.max(7, Math.round(d * 0.48));
+        return (
+          <Marker
+            key={ps.id}
+            latitude={ps.latitude}
+            longitude={ps.longitude}
+            anchor="center"
+          >
+            <div
+              className="flex shrink-0 items-center justify-center rounded-full shadow-lg ring-2 ring-blue-950/70"
+              style={{
+                width: d,
+                height: d,
+                backgroundColor: "#00264d",
+                boxShadow: "0 2px 10px rgba(0, 18, 51, 0.55)",
+              }}
+              title={ps.name}
+              role="img"
+              aria-label={`Police station: ${ps.name}`}
+            >
+              <VicPoliceMapIcon sizePx={iconPx} />
+            </div>
+          </Marker>
+        );
+      })}
+
+      {/* Hospitals & medical centres — white disc + red cross; medical centres use a red ring */}
+      {healthFacilities.map((hf) => {
+        const d = zoomScaledMarkerDiameterPx(viewState.zoom);
+        const iconPx = Math.max(7, Math.round(d * 0.5));
+        const isHospital = hf.kind === "hospital";
+        return (
+          <Marker
+            key={hf.id}
+            latitude={hf.latitude}
+            longitude={hf.longitude}
+            anchor="center"
+          >
+            <div
+              className={cn(
+                "flex shrink-0 items-center justify-center rounded-full shadow-md",
+                isHospital ? "ring-2 ring-slate-400/60" : "ring-2 ring-red-500/70"
+              )}
+              style={{
+                width: d,
+                height: d,
+                backgroundColor: "#ffffff",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+              }}
+              title={hf.name}
+              role="img"
+              aria-label={`${isHospital ? "Hospital" : "Medical centre"}: ${hf.name}`}
+            >
+              <MedicalCrossIcon sizePx={iconPx} />
+            </div>
+          </Marker>
+        );
+      })}
     </Map>
   );
 }
