@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import SOSAreaPanel, { type SOSAlert } from "@/components/SOSAreaPanel";
 import SOSIssueSheet, { type SOSIssueType } from "@/components/SOSIssueSheet";
 import SOSResolveSheet from "@/components/SOSResolveSheet";
-import { supabaseBrowser } from "@/lib/supabase-browser";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
 
 interface SOSControllerProps {
@@ -38,13 +38,13 @@ export default function SOSController({
         if (photo) {
           const ext = photo.name.split(".").pop() ?? "jpg";
           const path = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-          const { data, error } = await supabaseBrowser.storage
+          const { data, error } = await getSupabaseBrowser().storage
             .from("sos-photos")
             .upload(path, photo, { cacheControl: "3600", upsert: false });
           if (!error && data) {
             const {
               data: { publicUrl },
-            } = supabaseBrowser.storage.from("sos-photos").getPublicUrl(data.path);
+            } = getSupabaseBrowser().storage.from("sos-photos").getPublicUrl(data.path);
             photoUrl = publicUrl;
           }
         }
@@ -94,13 +94,13 @@ export default function SOSController({
       if (photo) {
         const ext = photo.name.split(".").pop() ?? "jpg";
         const path = `resolve-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-        const { data, error } = await supabaseBrowser.storage
+        const { data, error } = await getSupabaseBrowser().storage
           .from("sos-photos")
           .upload(path, photo, { cacheControl: "3600", upsert: false });
         if (!error && data) {
           const {
             data: { publicUrl },
-          } = supabaseBrowser.storage.from("sos-photos").getPublicUrl(data.path);
+          } = getSupabaseBrowser().storage.from("sos-photos").getPublicUrl(data.path);
           photoUrl = publicUrl;
         }
       }

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Users, ChevronLeft, ChevronRight, MapPin, Copy, Check, LogOut, Radio } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { supabaseBrowser } from "@/lib/supabase-browser";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
 import type { FriendLocation } from "@/components/RadiantMap";
 
@@ -106,7 +106,7 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
 
   // Fetch existing members when room is joined
   const fetchMembers = useCallback(async (code: string) => {
-    const { data } = await supabaseBrowser
+    const { data } = await getSupabaseBrowser()
       .from("friend_locations")
       .select("*")
       .eq("room_code", code.toUpperCase());
@@ -121,7 +121,7 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
   useEffect(() => {
     if (!inRoom || !roomCode) return;
 
-    const channel = supabaseBrowser
+    const channel = getSupabaseBrowser()
       .channel(`findmy-room-${roomCode}`)
       .on(
         "postgres_changes",
@@ -150,7 +150,7 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
       )
       .subscribe();
 
-    return () => { supabaseBrowser.removeChannel(channel); };
+    return () => { getSupabaseBrowser().removeChannel(channel); };
   }, [inRoom, roomCode]);
 
   // Push friend locations to map (exclude self)

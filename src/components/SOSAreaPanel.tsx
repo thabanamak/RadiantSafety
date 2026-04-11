@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Siren, Syringe, Stethoscope, HeartPulse, ChevronLeft, ChevronRight, MapPin, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { supabaseBrowser } from "@/lib/supabase-browser";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import type { SOSIssueType } from "@/components/SOSIssueSheet";
 import { getDeviceId } from "@/lib/identity";
 
@@ -64,7 +64,7 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
     if (!userCoords) return;
     setLoading(true);
     try {
-      const { data } = await supabaseBrowser.rpc("nearby_sos_alerts", {
+      const { data } = await getSupabaseBrowser().rpc("nearby_sos_alerts", {
         lat: userCoords.latitude,
         lng: userCoords.longitude,
         radius_meters: 1000,
@@ -83,7 +83,7 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
 
   // --- Realtime subscription -------------------------------------------------
   useEffect(() => {
-    const channel = supabaseBrowser
+    const channel = getSupabaseBrowser()
       .channel("sos-alerts-live")
       // New nearby SOS — add to list and auto-open panel
       .on(
@@ -122,7 +122,7 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
       )
       .subscribe();
 
-    return () => { supabaseBrowser.removeChannel(channel); };
+    return () => { getSupabaseBrowser().removeChannel(channel); };
   }, [userCoords, onAlertsChange]);
 
   const recentCount = alerts.filter(
