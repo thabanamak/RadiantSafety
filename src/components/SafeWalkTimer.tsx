@@ -74,7 +74,7 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
   const isUrgent = remaining <= 60 && !sosFired;
 
   return (
-    <div className="pointer-events-auto fixed bottom-24 left-4 z-50">
+    <div className="pointer-events-auto fixed bottom-36 right-4 z-[125] w-[min(20rem,calc(100vw-5.5rem))] sm:right-6">
       <div
         className={cn(
           "relative rounded-2xl border bg-black/95 p-4 shadow-2xl backdrop-blur-xl transition-colors duration-500",

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
+import { syncFriendRoomMembers } from "@/lib/friend-locations-sync";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,14 +23,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
     }
 
-    const { error } = await supabase
-      .from("friend_locations")
-      .delete()
-      .match({ room_code: room_code.toUpperCase(), device_id });
+    const code = room_code.toUpperCase();
+
+    const { error } = await supabase.from("friend_locations").delete().match({ room_code: code, device_id });
 
     if (error) {
       console.error("[friends/leave] delete error:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const { error: syncErr } = await syncFriendRoomMembers(supabase, code);
+    if (syncErr) {
+      console.error("[friends/leave] sync members error:", syncErr);
+      return NextResponse.json({ error: syncErr }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });

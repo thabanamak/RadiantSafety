@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Users, ChevronLeft, ChevronRight, MapPin, Copy, Check, LogOut, Radio } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
 import type { AuthUser } from "@/lib/auth-storage";
 import type { FriendLocation } from "@/components/RadiantMap";
+import { parseFriendMembersPayload } from "@/lib/friend-locations-sync";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,10 +18,12 @@ interface RoomMember {
   id: string;
   room_code: string;
   device_id: string;
-  display_name: string;
+  host_name: string;
   lat: number;
   lng: number;
   updated_at: string;
+  /** `{ host_device_id, people }` from API sync, or legacy array */
+  members: unknown;
 }
 
 interface FindMyControllerProps {
@@ -59,6 +63,15 @@ function haversine(lat1: number, lng1: number, lat2: number, lng2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function formatDistance(
+  from: { latitude: number; longitude: number } | null,
+  to: { lat: number; lng: number }
+): string | null {
+  if (!from) return null;
+  const dist = haversine(from.latitude, from.longitude, to.lat, to.lng);
+  return dist < 1000 ? `${Math.round(dist)}m` : `${(dist / 1000).toFixed(1)}km`;
+}
+
 function timeAgo(iso: string): string {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (secs < 10) return "just now";
@@ -67,9 +80,88 @@ function timeAgo(iso: string): string {
   return `${Math.floor(secs / 3600)}h ago`;
 }
 
+/** DB column rename + legacy rows */
+function memberLabel(m: RoomMember): string {
+  const legacy = m as RoomMember & { display_name?: string };
+  return m.host_name?.trim() || legacy.display_name?.trim() || "Friend";
+}
+
 const STORAGE_ROOM_KEY = "radiant_findmy_room";
 const STORAGE_NAME_KEY = "radiant_findmy_name";
 const SHARE_INTERVAL_MS = 10_000;
+
+function VirtualizedMemberRows({
+  rows,
+  userCoords,
+  deviceId,
+}: {
+  rows: RoomMember[];
+  userCoords: { latitude: number; longitude: number } | null;
+  deviceId: string;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 56,
+    overscan: 6,
+  });
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div
+      ref={parentRef}
+      className="max-h-52 overflow-y-auto rounded-lg border border-white/5 bg-black/20 pr-0.5"
+    >
+      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((vi) => {
+          const member = rows[vi.index]!;
+          const isMe = member.device_id === deviceId;
+          const distLabel = !isMe ? formatDistance(userCoords, member) : null;
+          const label = memberLabel(member);
+          return (
+            <div
+              key={member.device_id}
+              data-index={vi.index}
+              className="absolute left-0 top-0 w-full px-1"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              <div
+                className={cn(
+                  "flex items-center gap-2.5 rounded-xl px-2.5 py-2",
+                  isMe ? "bg-teal-500/10" : "bg-white/3 hover:bg-white/5"
+                )}
+              >
+                <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-900/60 text-xs font-bold text-teal-300 ring-1 ring-teal-500/30">
+                  {label.charAt(0).toUpperCase()}
+                  {isMe && (
+                    <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-teal-400" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-white">
+                    {label}
+                    {isMe && (
+                      <span className="ml-1 text-[9px] font-normal text-teal-500">(you)</span>
+                    )}
+                  </p>
+                  <p className="text-[10px] text-gray-600">{timeAgo(member.updated_at)}</p>
+                </div>
+                {distLabel && (
+                  <div className="shrink-0 text-right">
+                    <p className="text-[10px] text-gray-500">{distLabel}</p>
+                    <MapPin className="ml-auto h-2.5 w-2.5 text-gray-700" />
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -102,6 +194,32 @@ export default function FindMyController({
   const deviceId = useRef<string>("");
 
   const accountLabel = findMyAccountLabel(authUser);
+
+  const rosterParsed = useMemo(() => {
+    const raw = members.find((m) => m.members != null)?.members;
+    const parsed = parseFriendMembersPayload(raw);
+    if (parsed.people.length > 0) return parsed;
+    return {
+      host_device_id: null as string | null,
+      people: [...members]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((m) => ({ device_id: m.device_id, name: memberLabel(m) })),
+    };
+  }, [members]);
+
+  const hostDeviceId =
+    rosterParsed.host_device_id ?? rosterParsed.people[0]?.device_id ?? null;
+  const hostRow = hostDeviceId != null ? members.find((m) => m.device_id === hostDeviceId) : null;
+  const memberRows = useMemo(() => {
+    if (!hostDeviceId) return members;
+    return members.filter((m) => m.device_id !== hostDeviceId);
+  }, [members, hostDeviceId]);
+  const showHostMembersSplit = Boolean(hostRow) && members.length > 0;
+
+  const hostDistanceLabel = useMemo(() => {
+    if (!hostRow || hostRow.device_id === deviceId.current) return null;
+    return formatDistance(userCoords, hostRow);
+  }, [hostRow, userCoords]);
 
   // Restore persisted room on mount
   useEffect(() => {
@@ -203,7 +321,7 @@ export default function FindMyController({
   useEffect(() => {
     const friends = members
       .filter((m) => m.device_id !== deviceId.current)
-      .map((m) => ({ id: m.device_id, lat: m.lat, lng: m.lng, name: m.display_name }));
+      .map((m) => ({ id: m.device_id, lat: m.lat, lng: m.lng, name: memberLabel(m) }));
     onFriendLocationsChange(friends);
   }, [members, onFriendLocationsChange]);
 
@@ -216,7 +334,7 @@ export default function FindMyController({
       body: JSON.stringify({
         room_code: roomCode,
         device_id: deviceId.current,
-        display_name: displayName,
+        host_name: displayName,
         lat: userCoords.latitude,
         lng: userCoords.longitude,
       }),
@@ -251,7 +369,7 @@ export default function FindMyController({
           body: JSON.stringify({
             room_code: targetCode,
             device_id: deviceId.current,
-            display_name: name,
+            host_name: name,
             lat: userCoords.latitude,
             lng: userCoords.longitude,
           }),
@@ -479,50 +597,77 @@ export default function FindMyController({
                   </button>
                 </div>
 
-                {/* Friends list */}
+                {/* Host + members (roster from `members` jsonb; host first) */}
                 {members.length > 0 && (
-                  <div className="max-h-52 overflow-y-auto">
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                  <div className="flex flex-col gap-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
                       {members.length} {members.length === 1 ? "person" : "people"} in room
                     </p>
-                    <ul className="flex flex-col gap-1">
-                      {members.map((member) => {
-                        const isMe = member.device_id === deviceId.current;
-                        const dist = userCoords
-                          ? haversine(userCoords.latitude, userCoords.longitude, member.lat, member.lng)
-                          : null;
-                        return (
-                          <li
-                            key={member.device_id}
-                            className={cn(
-                              "flex items-center gap-2.5 rounded-xl px-2.5 py-2",
-                              isMe ? "bg-teal-500/10" : "bg-white/3 hover:bg-white/5"
-                            )}
-                          >
-                            <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-900/60 ring-1 ring-teal-500/30 text-xs font-bold text-teal-300">
-                              {member.display_name.charAt(0).toUpperCase()}
-                              {isMe && (
-                                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-teal-400" />
+
+                    {showHostMembersSplit ? (
+                      <>
+                        <div>
+                          <div className="mb-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-500/90">
+                              Host
+                            </p>
+                            <p className="text-[9px] text-gray-600">Created this room</p>
+                          </div>
+                          {hostRow ? (
+                            <div
+                              className={cn(
+                                "flex items-center gap-2.5 rounded-xl border border-teal-500/25 px-2.5 py-2",
+                                hostRow.device_id === deviceId.current ? "bg-teal-500/10" : "bg-white/3"
                               )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs font-semibold text-white">
-                                {member.display_name}{isMe && <span className="ml-1 text-[9px] font-normal text-teal-500">(you)</span>}
-                              </p>
-                              <p className="text-[10px] text-gray-600">{timeAgo(member.updated_at)}</p>
-                            </div>
-                            {!isMe && dist !== null && (
-                              <div className="shrink-0 text-right">
-                                <p className="text-[10px] text-gray-500">
-                                  {dist < 1000 ? `${Math.round(dist)}m` : `${(dist / 1000).toFixed(1)}km`}
-                                </p>
-                                <MapPin className="ml-auto h-2.5 w-2.5 text-gray-700" />
+                            >
+                              <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-900/60 text-xs font-bold text-teal-300 ring-1 ring-teal-500/40">
+                                {memberLabel(hostRow).charAt(0).toUpperCase()}
+                                {hostRow.device_id === deviceId.current && (
+                                  <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-teal-400" />
+                                )}
                               </div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-semibold text-white">
+                                  {memberLabel(hostRow)}
+                                  {hostRow.device_id === deviceId.current && (
+                                    <span className="ml-1 text-[9px] font-normal text-teal-500">(you)</span>
+                                  )}
+                                </p>
+                                <p className="text-[10px] text-gray-600">{timeAgo(hostRow.updated_at)}</p>
+                              </div>
+                              {hostDistanceLabel ? (
+                                <div className="shrink-0 text-right">
+                                  <p className="text-[10px] text-gray-500">{hostDistanceLabel}</p>
+                                  <MapPin className="ml-auto h-2.5 w-2.5 text-gray-700" />
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {memberRows.length > 0 && (
+                          <div>
+                            <div className="mb-1.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                                Members ({memberRows.length})
+                              </p>
+                              <p className="text-[9px] text-gray-600">Joined this room</p>
+                            </div>
+                            <VirtualizedMemberRows
+                              rows={memberRows}
+                              userCoords={userCoords}
+                              deviceId={deviceId.current}
+                            />
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <VirtualizedMemberRows
+                        rows={members}
+                        userCoords={userCoords}
+                        deviceId={deviceId.current}
+                      />
+                    )}
                   </div>
                 )}
 
