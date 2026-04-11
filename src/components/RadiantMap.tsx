@@ -72,21 +72,6 @@ const heatmapLayer: LayerProps = {
   },
 };
 
-/** Avoid controlled-map feedback loops: Mapbox can re-emit move with tiny float drift. */
-function viewStateMeaningfullyChanged(
-  a: { latitude: number; longitude: number; zoom: number; bearing: number; pitch: number },
-  b: typeof a
-): boolean {
-  const eps = 1e-7;
-  return (
-    Math.abs(a.latitude - b.latitude) > eps ||
-    Math.abs(a.longitude - b.longitude) > eps ||
-    Math.abs(a.zoom - b.zoom) > 1e-5 ||
-    Math.abs(a.bearing - b.bearing) > 1e-4 ||
-    Math.abs(a.pitch - b.pitch) > 1e-4
-  );
-}
-
 function mapCenterMeaningfullyChanged(
   a: { latitude: number; longitude: number; zoom: number },
   b: { latitude: number; longitude: number; zoom: number }
@@ -207,13 +192,14 @@ export default function RadiantMap({
     longitude: number;
     zoom: number;
   } | null>(null);
-  const [viewState, setViewState] = useState({
+  /** Uncontrolled viewport — do not mirror Mapbox viewState in React (avoids move/setState feedback loops). */
+  const initialViewState = useRef({
     latitude: MELBOURNE_CENTER.latitude as number,
     longitude: MELBOURNE_CENTER.longitude as number,
     zoom: MELBOURNE_CENTER.zoom as number,
     bearing: 0,
     pitch: 30,
-  });
+  }).current;
 
   // Animate the dropped pin — cycle through colours as it "melts" in
   const [pinPhase, setPinPhase] = useState<0 | 1 | 2 | 3>(0);
@@ -304,24 +290,13 @@ export default function RadiantMap({
   }, [contextualRouteCoordinates]);
 
   const onMove = useCallback(
-    (evt: { viewState: typeof viewState }) => {
+    (evt: { viewState: { latitude: number; longitude: number; zoom: number } }) => {
+      if (!onCenterChange) return;
       const vs = evt.viewState;
-      const next = {
+      const center = {
         latitude: vs.latitude,
         longitude: vs.longitude,
         zoom: vs.zoom,
-        bearing: vs.bearing,
-        pitch: vs.pitch,
-      };
-      setViewState((prev) =>
-        viewStateMeaningfullyChanged(prev, next) ? next : prev
-      );
-
-      if (!onCenterChange) return;
-      const center = {
-        latitude: next.latitude,
-        longitude: next.longitude,
-        zoom: next.zoom,
       };
       const last = lastReportedCenterRef.current;
       if (last && !mapCenterMeaningfullyChanged(last, center)) return;
@@ -381,7 +356,7 @@ export default function RadiantMap({
   return (
     <Map
       ref={mapRef}
-      {...viewState}
+      initialViewState={initialViewState}
       onMove={onMove}
       onClick={handleMapClick}
       interactiveLayerIds={["incidents-points"]}
