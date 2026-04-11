@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, ExternalLink, MapPin, Newspaper, Zap } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Newspaper, Zap } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export type NewsIncidentItem = {
@@ -72,6 +72,37 @@ export default function NewsIncidentFeed({
       return bt - at;
     });
   }, [items]);
+
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
+  const [summaryLoading, setSummaryLoading] = useState<Record<string, boolean>>({});
+
+  const ensureSummary = useCallback(async (item: NewsIncidentItem) => {
+    if (!item.id) return;
+    if (summaries[item.id]) return;
+    if (!item.url) {
+      setSummaries((p) => ({
+        ...p,
+        [item.id]: `Summary unavailable for \"${item.title}\". Open the source link for full details.`,
+      }));
+      return;
+    }
+
+    setSummaryLoading((p) => ({ ...p, [item.id]: true }));
+    try {
+      const res = await fetch(
+        `/api/article-summary?url=${encodeURIComponent(item.url)}&title=${encodeURIComponent(
+          item.title
+        )}`,
+        { cache: "no-store" }
+      );
+      const data = (await res.json()) as { summary?: string };
+      setSummaries((p) => ({ ...p, [item.id]: data.summary ?? "Summary unavailable." }));
+    } catch {
+      setSummaries((p) => ({ ...p, [item.id]: "Summary unavailable." }));
+    } finally {
+      setSummaryLoading((p) => ({ ...p, [item.id]: false }));
+    }
+  }, [summaries]);
 
   const isOpen = sheetState !== "collapsed";
 
@@ -146,9 +177,19 @@ export default function NewsIncidentFeed({
       <div className="flex-1 overflow-y-auto px-5 pb-6">
         <div className="flex flex-col gap-3">
           {sorted.map((item) => (
-            <div
+            <button
               key={item.id}
-              className="rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600"
+              type="button"
+              onClick={() => {
+                if (item.latitude != null && item.longitude != null) {
+                  onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 });
+                }
+                void ensureSummary(item);
+              }}
+              className={cn(
+                "text-left rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600",
+                (item.latitude == null || item.longitude == null) && "cursor-default"
+              )}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -159,39 +200,60 @@ export default function NewsIncidentFeed({
                     {item.areaName ?? "Location unknown"}
                   </p>
                 </div>
-                {item.url && (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-xs text-gray-300 hover:border-gray-500 hover:text-white"
-                    aria-label="Open source"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  {item.latitude != null && item.longitude != null && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewMap({ latitude: item.latitude as number, longitude: item.longitude as number, zoom: 16 });
+                      }}
+                      className="rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-[11px] font-semibold text-gray-300 hover:border-gray-500 hover:text-white"
+                      aria-label="Fly to map"
+                    >
+                      Fly
+                    </button>
+                  )}
+
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-xs text-gray-300 hover:border-gray-500 hover:text-white"
+                      aria-label="Open source"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
               </div>
 
-              <div className="mt-3 flex items-center justify-end">
-                <button
-                  disabled={item.latitude == null || item.longitude == null}
-                  onClick={() =>
-                    item.latitude != null &&
-                    item.longitude != null &&
-                    onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 })
-                  }
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-                    item.latitude == null || item.longitude == null
-                      ? "border-radiant-border text-gray-600 cursor-not-allowed"
-                      : "border-radiant-border bg-radiant-dark text-gray-300 hover:border-gray-500 hover:text-white"
-                  )}
-                >
-                  <MapPin className="h-3 w-3" />
-                  View Map
-                </button>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                {!summaries[item.id] && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void ensureSummary(item);
+                    }}
+                    className="rounded-lg border border-radiant-border bg-radiant-dark px-3 py-1.5 text-xs font-semibold text-gray-300 hover:border-gray-500 hover:text-white"
+                  >
+                    {summaryLoading[item.id] ? "Generating…" : "Generate summary"}
+                  </button>
+                )}
+                <div className="text-[11px] text-gray-500">
+                  {item.outlet ? `Source: ${item.outlet}` : "Source: VicPol"}
+                </div>
               </div>
-            </div>
+
+              {summaries[item.id] && (
+                <p className="mt-3 text-[12px] leading-relaxed text-gray-300">
+                  {summaries[item.id]}
+                </p>
+              )}
+            </button>
           ))}
           {sorted.length === 0 && (
             <div className="rounded-xl border border-radiant-border bg-radiant-card p-4 text-sm text-gray-400">

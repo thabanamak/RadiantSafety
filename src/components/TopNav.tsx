@@ -1,6 +1,6 @@
 "use client";
 
-import { Shield, AlertCircle, LogIn, UserPlus, LogOut, ChevronDown, Bot } from "lucide-react";
+import { LogIn, UserPlus, LogOut, ChevronDown, ShieldAlert, Users } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
 import type { UserReputation, UserReport } from "@/lib/types";
@@ -12,125 +12,124 @@ export interface AuthUser {
   email: string;
 }
 
-export type DashboardTab = "pulse" | "news";
+export type DashboardTab = "news";
+export type IncidentTab = "official" | "user-reported";
 
 interface TopNavProps {
   reputation: UserReputation;
   user: AuthUser | null;
   reports: UserReport[];
+  activeIncidentTab: IncidentTab;
+  onIncidentTabChange: (tab: IncidentTab) => void;
   onSearchSelectIncident: (report: UserReport) => void;
   onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
   onLoginClick: () => void;
   onSignupClick: () => void;
   onLogout: () => void;
-  onChatToggle: () => void;
-  isChatOpen: boolean;
 }
 
 export default function TopNav({
   reputation,
   user,
   reports,
+  activeIncidentTab,
+  onIncidentTabChange,
   onSearchSelectIncident,
   onSearchSelectArea,
   onLoginClick,
   onSignupClick,
   onLogout,
-  onChatToggle,
-  isChatOpen,
 }: TopNavProps) {
-  const activeAlerts = userReports.length;
-
   return (
-    <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-center gap-4 px-5 py-3 bg-gradient-to-b from-black/80 via-black/50 to-transparent">
-      {/* Left: Branding + Reputation */}
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-gray-400" />
-          <span className="text-xs font-medium uppercase tracking-widest text-gray-400">
-            The Pulse
-          </span>
+    <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
+      {/* Row 1: Branding + Right controls */}
+      <div className="flex items-center gap-4 px-5 py-3">
+        {/* Left: Branding + Reputation */}
+        <div className="flex shrink-0 items-center gap-3">
+          {user && (
+            <>
+              <div className="h-4 w-px bg-gray-700" />
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-100">
+                  {reputation.score}%
+                </span>
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                    reputation.isTrusted
+                      ? "bg-radiant-green/20 text-radiant-green"
+                      : "bg-yellow-500/20 text-yellow-400"
+                  )}
+                >
+                  {reputation.label}
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
-        {user && (
-          <>
-            <div className="h-4 w-px bg-gray-700" />
+        <div className="flex-1" />
+
+        {/* Right: Auth */}
+        <div className="flex shrink-0 items-center gap-4">
+          {user ? (
+            <AccountDropdown user={user} onLogout={onLogout} />
+          ) : (
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-100">
-                {reputation.score}%
-              </span>
-              <span
-                className={cn(
-                  "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                  reputation.isTrusted
-                    ? "bg-radiant-green/20 text-radiant-green"
-                    : "bg-yellow-500/20 text-yellow-400"
-                )}
+              <button
+                onClick={onLoginClick}
+                className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
               >
-                {reputation.label}
-              </span>
+                <LogIn className="h-3.5 w-3.5" />
+                Log In
+              </button>
+              <button
+                onClick={onSignupClick}
+                className="flex items-center gap-1.5 rounded-lg bg-radiant-red px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-red-500/20 transition-all hover:shadow-red-500/40"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Sign Up
+              </button>
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Center: Search */}
-      <div className="flex flex-1 justify-center">
+      {/* Row 2: Big centered search */}
+      <div className="flex flex-col items-center gap-3 px-5">
         <SearchBar
           reports={reports}
           onSelectIncident={onSearchSelectIncident}
           onSelectArea={onSearchSelectArea}
         />
-      </div>
 
-      {/* Right: Location, Alerts, Auth */}
-      <div className="flex shrink-0 items-center gap-4">
-        <span className="hidden text-xs font-medium uppercase tracking-widest text-gray-400 lg:block">
-          Melbourne
-        </span>
-        <div className="flex items-center gap-1.5">
-          <AlertCircle className="h-3.5 w-3.5 text-radiant-red animate-pulse" />
-          <span className="text-sm font-semibold text-radiant-red">
-            {activeAlerts}
-          </span>
+        {/* Incident tab pills */}
+        <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-1 backdrop-blur-md shadow-lg">
+          <button
+            onClick={() => onIncidentTabChange("official")}
+            className={cn(
+              "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
+              activeIncidentTab === "official"
+                ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
+                : "text-gray-400 hover:text-gray-200"
+            )}
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+            Official Incidents
+          </button>
+          <button
+            onClick={() => onIncidentTabChange("user-reported")}
+            className={cn(
+              "flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold transition-all",
+              activeIncidentTab === "user-reported"
+                ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
+                : "text-gray-400 hover:text-gray-200"
+            )}
+          >
+            <Users className="h-3.5 w-3.5" />
+            User Reported
+          </button>
         </div>
-
-        <button
-          onClick={onChatToggle}
-          className={cn(
-            "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all",
-            isChatOpen
-              ? "border-radiant-red/50 bg-radiant-red/10 text-radiant-red"
-              : "border-radiant-border text-gray-400 hover:border-gray-500 hover:text-gray-200"
-          )}
-          aria-label="Toggle Safety AI"
-        >
-          <Bot className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">Safety AI</span>
-        </button>
-
-        <div className="h-5 w-px bg-gray-700" />
-
-        {user ? (
-          <AccountDropdown user={user} onLogout={onLogout} />
-        ) : (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onLoginClick}
-              className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              Log In
-            </button>
-            <button
-              onClick={onSignupClick}
-              className="flex items-center gap-1.5 rounded-lg bg-radiant-red px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-red-500/20 transition-all hover:shadow-red-500/40"
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              Sign Up
-            </button>
-          </div>
-        )}
       </div>
     </nav>
   );
