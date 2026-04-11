@@ -42,3 +42,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a3a;
 }
+
+/* Keyframe for SOS pulse markers — used inline via animation property */
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}

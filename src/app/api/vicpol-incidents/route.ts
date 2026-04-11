@@ -28,8 +28,8 @@ interface VicPolIncident {
 
 const INTENSITY_RULES: Array<{ score: number; keywords: string[] }> = [
   { score: 10, keywords: ["homicide", "murder", "shooting", "shot", "firearm", "terror"] },
-  { score: 9,  keywords: ["stabbing", "armed", "sexual assault", "rape"] },
-  { score: 8,  keywords: ["aggravated burglary", "brawl", "affray", "carjacking", "arson"] },
+  { score: 9,  keywords: ["stabbing", "armed", "sexual assault", "rape", "arson"] },
+  { score: 8,  keywords: ["aggravated burglary", "brawl", "affray", "carjacking"] },
   { score: 6,  keywords: ["fatal", "crash", "collision", "fire", "drug"] },
   { score: 4,  keywords: ["burglary", "stolen car", "theft of motor vehicle", "vandalism"] },
   { score: 2,  keywords: ["theft", "speeding", "impounded", "missing", "arrested", "rescue"] },
