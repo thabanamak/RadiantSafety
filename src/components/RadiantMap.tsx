@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Map, { Layer, Marker, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
 import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
+import type { SafeRouteLineFeature } from "@/lib/safe-route";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
 
@@ -77,6 +78,21 @@ const pointsLayer: LayerProps = {
   },
 };
 
+const safeRouteLayer: LayerProps = {
+  id: "safe-route-line",
+  type: "line",
+  source: "safe-route",
+  layout: {
+    "line-join": "round",
+    "line-cap": "round",
+  },
+  paint: {
+    "line-color": "#22d3ee",
+    "line-width": 5,
+    "line-opacity": 0.92,
+  },
+};
+
 export type DroppedPin = {
   latitude: number;
   longitude: number;
@@ -95,6 +111,8 @@ interface RadiantMapProps {
   gpsPin?: DroppedPin | null;
   /** Manually dropped pin — shown as animated red marker */
   droppedPin?: DroppedPin | null;
+  /** Heat-aware backend route (cyan line) */
+  safeRouteLine?: SafeRouteLineFeature | null;
 }
 
 export default function RadiantMap({
@@ -105,6 +123,7 @@ export default function RadiantMap({
   onPinDropped,
   gpsPin,
   droppedPin,
+  safeRouteLine,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [viewState, setViewState] = useState({
@@ -162,6 +181,21 @@ export default function RadiantMap({
   // Intentionally DO NOT fly-to on droppedPin.
   // The UX should feel like the pin melts into the map rather than the camera snapping/zooming.
 
+  useEffect(() => {
+    if (!safeRouteLine || !mapRef.current) return;
+    const coords = safeRouteLine.geometry.coordinates;
+    if (coords.length < 2) return;
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    mapRef.current.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: { top: 100, bottom: 160, left: 60, right: 60 }, duration: 1400, pitch: 40 }
+    );
+  }, [safeRouteLine]);
+
   const onMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
       setViewState(evt.viewState);
@@ -209,6 +243,12 @@ export default function RadiantMap({
         <Layer {...heatmapLayer} />
         <Layer {...pointsLayer} />
       </Source>
+
+      {safeRouteLine && (
+        <Source id="safe-route" type="geojson" data={safeRouteLine}>
+          <Layer {...safeRouteLayer} />
+        </Source>
+      )}
 
       {/* GPS "ping me" marker — pulsing blue dot */}
       {gpsPin && (

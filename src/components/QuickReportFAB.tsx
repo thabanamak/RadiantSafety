@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { AlertTriangle, X, MapPin, Navigation, PenLine, Trash2, CheckCircle, Siren } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
 import type { ReportCategory } from "@/lib/types";
 
 const CATEGORIES: ReportCategory[] = [
@@ -67,31 +68,20 @@ export default function QuickReportFAB({
     }
   }, [droppedPin, locMode, onPinLocation, onDropPinMode]);
 
-  const handleGPS = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGpsError("Geolocation not supported on this device.");
-      return;
-    }
+  const handleGPS = useCallback(async () => {
     setGpsLoading(true);
     setGpsError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const pin: PinLocation = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          mode: "gps",
-        };
-        setPinnedLocation(pin);
-        onPinLocation?.(pin);
-        setLocMode("gps");
-        setGpsLoading(false);
-      },
-      (err) => {
-        setGpsError(err.message || "Could not get location.");
-        setGpsLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    try {
+      const { latitude, longitude } = await getCurrentPositionBestEffort();
+      const pin: PinLocation = { latitude, longitude, mode: "gps" };
+      setPinnedLocation(pin);
+      onPinLocation?.(pin);
+      setLocMode("gps");
+    } catch (err) {
+      setGpsError(explainGeoError(err as GeolocationPositionError));
+    } finally {
+      setGpsLoading(false);
+    }
   }, [onPinLocation]);
 
   const handleEmergencyPing = useCallback(async () => {
