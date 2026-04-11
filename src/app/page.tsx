@@ -9,6 +9,13 @@ import QuickReportFAB, {
   type SubmittedReportPayload,
 } from "@/components/QuickReportFAB";
 import AuthModal from "@/components/AuthModal";
+import ReporterProfileModal from "@/components/ReporterProfileModal";
+import {
+  loadSession,
+  clearSession,
+  ensureDemoAccounts,
+  instantDemoLogin,
+} from "@/lib/auth-storage";
 import { currentUser } from "@/lib/mock-data";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
@@ -67,7 +74,12 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [modalState, setModalState] = useState<ModalState>("closed");
+  const [reporterProfile, setReporterProfile] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
+  const canSubmitReports = Boolean(authUser?.over18Verified);
 
   const [vicpolLoaded, setVicpolLoaded] = useState(false);
   const [vicpolLoading, setVicpolLoading] = useState(false);
@@ -122,12 +134,25 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     []
   );
 
+  useEffect(() => {
+    ensureDemoAccounts();
+    const saved = loadSession();
+    if (saved) setAuthUser(saved);
+  }, []);
+
   const handleAuth = useCallback((user: AuthUser) => {
     setAuthUser(user);
   }, []);
 
   const handleLogout = useCallback(() => {
+    clearSession();
     setAuthUser(null);
+  }, []);
+
+  const handleDemoLogin = useCallback(() => {
+    const user = instantDemoLogin();
+    setAuthUser(user);
+    setModalState("closed");
   }, []);
 
   const loadVicPol = useCallback(async () => {
@@ -209,10 +234,13 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
 
   const handleReportSubmitted = useCallback(
     (payload: SubmittedReportPayload) => {
+      if (!authUser?.over18Verified) return;
       const id =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `report-${Date.now()}`;
+      const rid = authUser.id;
+      const rname = authUser.name;
       const report: UserReport = {
         id,
         latitude: payload.location.latitude,
@@ -225,7 +253,9 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         upvotes: 0,
         downvotes: 0,
         createdAt: new Date(),
-        userId: authUser?.email ?? "anonymous",
+        userId: rid,
+        reporterId: rid,
+        reporterDisplayName: rname,
       };
       setSubmittedUserReports((prev) => [report, ...prev]);
       setActiveIncidentTab("user-reported");
@@ -237,6 +267,10 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     },
     [authUser]
   );
+
+  const handleDeleteReport = useCallback((reportId: string) => {
+    setSubmittedUserReports((prev) => prev.filter((r) => r.id !== reportId));
+  }, []);
 
   const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
     id: r.id,
@@ -329,8 +363,9 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           activeIncidentTab={activeIncidentTab}
           onIncidentTabChange={setActiveIncidentTab}
           onSearchSelectArea={handleSelectArea}
-          onLoginClick={() => {}}
-          onSignupClick={() => {}}
+          onLoginClick={() => setModalState("login")}
+          onSignupClick={() => setModalState("signup")}
+          onDemoLogin={handleDemoLogin}
           onLogout={handleLogout}
         />
 
@@ -353,6 +388,9 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           <IncidentFeed
             reports={submittedUserReports}
             onViewMap={handleViewMap}
+            onOpenReporterProfile={(id, name) => setReporterProfile({ id, name })}
+            currentUserId={authUser?.id ?? null}
+            onDeleteReport={handleDeleteReport}
             reserveTopPx={220}
             collapsedLabel={
               submittedUserReports.length > 0
@@ -370,7 +408,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
               <p className="text-xs text-gray-500">
-                Use the red quick-report button and set a location to add one.
+                Sign up with an 18+ verified account, then use the quick-report button to add one.
               </p>
             </div>
           </div>
@@ -383,6 +421,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         droppedPin={droppedPin}
         onReportSubmitted={handleReportSubmitted}
         onSOSPress={() => setShowSOSSheet(true)}
+        reportingAllowed={canSubmitReports}
+        onRequireReportingAuth={() => setModalState("signup")}
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
@@ -459,8 +499,24 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
 
       <AuthModal
         isOpen={modalState !== "closed"}
+        initialTab={modalState === "signup" ? "signup" : "login"}
         onClose={() => setModalState("closed")}
         onAuth={handleAuth}
+      />
+
+      <ReporterProfileModal
+        open={reporterProfile != null}
+        onClose={() => setReporterProfile(null)}
+        reporterId={reporterProfile?.id ?? ""}
+        reporterDisplayName={reporterProfile?.name ?? ""}
+        reports={submittedUserReports.filter(
+          (r) =>
+            (r.reporterId || r.userId).trim().toLowerCase() ===
+            (reporterProfile?.id ?? "").trim().toLowerCase()
+        )}
+        onViewMap={handleViewMap}
+        currentUserId={authUser?.id ?? null}
+        onDeleteReport={handleDeleteReport}
       />
     </main>
   );

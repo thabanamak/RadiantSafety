@@ -25,6 +25,8 @@ export const userReports: UserReport[] = [
     downvotes: 2,
     createdAt: new Date(Date.now() - 3 * 60 * 1000),
     userId: "u1",
+    reporterId: "demo-u1",
+    reporterDisplayName: "Jordan K.",
   },
   {
     id: "r2",
@@ -38,6 +40,8 @@ export const userReports: UserReport[] = [
     downvotes: 0,
     createdAt: new Date(Date.now() - 12 * 60 * 1000),
     userId: "u2",
+    reporterId: "demo-u2",
+    reporterDisplayName: "Sam T.",
   },
   {
     id: "r3",
@@ -51,6 +55,8 @@ export const userReports: UserReport[] = [
     downvotes: 1,
     createdAt: new Date(Date.now() - 25 * 60 * 1000),
     userId: "u3",
+    reporterId: "demo-u3",
+    reporterDisplayName: "Riley M.",
   },
   {
     id: "r4",
@@ -64,6 +70,8 @@ export const userReports: UserReport[] = [
     downvotes: 3,
     createdAt: new Date(Date.now() - 45 * 60 * 1000),
     userId: "u4",
+    reporterId: "demo-u4",
+    reporterDisplayName: "Alex P.",
   },
   {
     id: "r5",
@@ -77,6 +85,8 @@ export const userReports: UserReport[] = [
     downvotes: 4,
     createdAt: new Date(Date.now() - 60 * 60 * 1000),
     userId: "u5",
+    reporterId: "demo-u5",
+    reporterDisplayName: "Casey L.",
   },
   {
     id: "r6",
@@ -90,6 +100,8 @@ export const userReports: UserReport[] = [
     downvotes: 2,
     createdAt: new Date(Date.now() - 90 * 60 * 1000),
     userId: "u6",
+    reporterId: "demo-u6",
+    reporterDisplayName: "Morgan D.",
   },
   {
     id: "r7",
@@ -103,6 +115,8 @@ export const userReports: UserReport[] = [
     downvotes: 1,
     createdAt: new Date(Date.now() - 120 * 60 * 1000),
     userId: "u7",
+    reporterId: "demo-u7",
+    reporterDisplayName: "Taylor R.",
   },
   {
     id: "r8",
@@ -116,6 +130,8 @@ export const userReports: UserReport[] = [
     downvotes: 2,
     createdAt: new Date(Date.now() - 180 * 60 * 1000),
     userId: "u8",
+    reporterId: "demo-u8",
+    reporterDisplayName: "Jamie N.",
   },
 ];
 

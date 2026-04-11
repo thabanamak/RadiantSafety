@@ -11,6 +11,8 @@ import {
   CheckCircle,
   Clock,
   X,
+  User,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { UserReport } from "@/lib/types";
@@ -18,6 +20,11 @@ import type { UserReport } from "@/lib/types";
 interface IncidentFeedProps {
   reports: UserReport[];
   onViewMap: (report: UserReport) => void;
+  /** Click reporter to open profile (stats + list). */
+  onOpenReporterProfile?: (reporterId: string, displayName: string) => void;
+  /** Signed-in user id (normalized); used to allow deleting only your own reports. */
+  currentUserId?: string | null;
+  onDeleteReport?: (reportId: string) => void;
   /** Collapsed bar label (default: Incident Feed) */
   collapsedLabel?: string;
   /** Header when sheet is open */
@@ -68,6 +75,9 @@ function closestSnap(h: number, reserveTopPx: number): SheetState {
 export default function IncidentFeed({
   reports,
   onViewMap,
+  onOpenReporterProfile,
+  currentUserId,
+  onDeleteReport,
   collapsedLabel = "Incident Feed",
   sheetTitle = "Incident Feed",
   reserveTopPx = 0,
@@ -188,7 +198,7 @@ export default function IncidentFeed({
         <div className="flex-1 overflow-y-auto px-5 pb-6">
           {sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-500">
-              No reports yet. Submit one with the quick-report button (bottom-right).
+              No reports yet. Sign up as an 18+ verified user and use the quick-report button (bottom-right).
             </p>
           ) : (
             <div className="flex flex-col gap-3">
@@ -197,6 +207,9 @@ export default function IncidentFeed({
                   key={report.id}
                   report={report}
                   onViewMap={() => onViewMap(report)}
+                  onOpenReporterProfile={onOpenReporterProfile}
+                  currentUserId={currentUserId}
+                  onDeleteReport={onDeleteReport}
                   nowMs={nowMs}
                 />
               ))}
@@ -208,15 +221,43 @@ export default function IncidentFeed({
   );
 }
 
+function reporterKey(report: UserReport): string {
+  return report.reporterId || report.userId;
+}
+
+function reporterName(report: UserReport): string {
+  return report.reporterDisplayName || report.reporterId || report.userId || "Unknown";
+}
+
+function isReportOwnedBy(report: UserReport, currentUserId: string | null | undefined): boolean {
+  if (!currentUserId) return false;
+  const rid = reporterKey(report);
+  return rid.trim().toLowerCase() === currentUserId.trim().toLowerCase();
+}
+
 function IncidentCard({
   report,
   onViewMap,
+  onOpenReporterProfile,
+  currentUserId,
+  onDeleteReport,
   nowMs,
 }: {
   report: UserReport;
   onViewMap: () => void;
+  onOpenReporterProfile?: (reporterId: string, displayName: string) => void;
+  currentUserId?: string | null;
+  onDeleteReport?: (reportId: string) => void;
   nowMs: number | null;
 }) {
+  const canDelete =
+    Boolean(onDeleteReport) && isReportOwnedBy(report, currentUserId);
+
+  const handleDelete = () => {
+    if (!canDelete || !onDeleteReport) return;
+    if (!window.confirm("Delete this report? This cannot be undone.")) return;
+    onDeleteReport(report.id);
+  };
   const [enlargedSrc, setEnlargedSrc] = useState<string | null>(null);
 
   useEffect(() => {
@@ -268,6 +309,23 @@ function IncidentCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-bold text-gray-100">{report.category}</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-gray-600">Reported by</span>
+            <button
+              type="button"
+              onClick={() =>
+                onOpenReporterProfile?.(reporterKey(report), reporterName(report))
+              }
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border border-radiant-border bg-radiant-dark/80 px-2 py-0.5 text-[11px] font-medium text-sky-300 transition-colors",
+                onOpenReporterProfile && "hover:border-sky-500/50 hover:text-sky-200",
+                !onOpenReporterProfile && "cursor-default opacity-80"
+              )}
+            >
+              <User className="h-3 w-3 shrink-0" />
+              {reporterName(report)}
+            </button>
+          </div>
           {report.imageDataUrl ? (
             <div className="mt-2 flex gap-2">
               <button
@@ -313,18 +371,31 @@ function IncidentCard({
         </span>
       </div>
 
-      <div className="mt-3 flex items-center justify-between">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <VoteButton icon={ThumbsUp}   count={report.upvotes} />
           <VoteButton icon={ThumbsDown} count={report.downvotes} />
         </div>
-        <button
-          onClick={onViewMap}
-          className="flex items-center gap-1.5 rounded-lg border border-radiant-border bg-radiant-dark px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-        >
-          <MapPin className="h-3 w-3" />
-          View Map
-        </button>
+        <div className="flex items-center gap-2">
+          {canDelete && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:border-red-400/50 hover:bg-red-500/20"
+            >
+              <Trash2 className="h-3 w-3" />
+              Delete
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onViewMap}
+            className="flex items-center gap-1.5 rounded-lg border border-radiant-border bg-radiant-dark px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+          >
+            <MapPin className="h-3 w-3" />
+            View Map
+          </button>
+        </div>
       </div>
     </div>
     </>

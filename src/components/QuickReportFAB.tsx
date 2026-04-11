@@ -51,6 +51,10 @@ interface QuickReportFABProps {
   onReportSubmitted?: (report: SubmittedReportPayload) => void;
   /** Called when the SOS button is tapped — opens the issue selection sheet */
   onSOSPress?: () => void;
+  /** Only 18+ verified accounts can open the incident report flow */
+  reportingAllowed?: boolean;
+  /** When user tries to report without permission — open auth / signup */
+  onRequireReportingAuth?: () => void;
 }
 
 export default function QuickReportFAB({
@@ -59,6 +63,8 @@ export default function QuickReportFAB({
   droppedPin,
   onReportSubmitted,
   onSOSPress,
+  reportingAllowed = false,
+  onRequireReportingAuth,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -129,6 +135,14 @@ export default function QuickReportFAB({
       return;
     }
 
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      lastConsumedDropKeyRef.current = null;
+      onPinLocation?.(null);
+      onDropPinMode?.(false);
+      return;
+    }
+
     const dropKey = `${droppedPin.latitude},${droppedPin.longitude}`;
     if (lastConsumedDropKeyRef.current === dropKey) return;
     lastConsumedDropKeyRef.current = dropKey;
@@ -140,7 +154,7 @@ export default function QuickReportFAB({
     onDropPinMode?.(false);
     setStep("location");
     setIsOpen(true);
-  }, [droppedPin, locMode, onPinLocation, onDropPinMode]);
+  }, [droppedPin, locMode, onPinLocation, onDropPinMode, reportingAllowed, onRequireReportingAuth]);
 
   const handleGPS = useCallback(() => {
     if (!navigator.geolocation) {
@@ -177,13 +191,17 @@ export default function QuickReportFAB({
   }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     setPinnedLocation(null);
     onPinLocation?.(null);
     setLocMode("drop");
     setDropPinActive(true);
     onDropPinMode?.(true);
     setIsOpen(false);
-  }, [onDropPinMode, onPinLocation]);
+  }, [onDropPinMode, onPinLocation, reportingAllowed, onRequireReportingAuth]);
 
   const handleClearPin = useCallback(() => {
     setPinnedLocation(null);
@@ -194,6 +212,10 @@ export default function QuickReportFAB({
   }, [onPinLocation, onDropPinMode]);
 
   const handleSubmit = () => {
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     if (!selected || !pinnedLocation) return;
     onReportSubmitted?.({
       category: selected,
@@ -238,6 +260,10 @@ export default function QuickReportFAB({
               </div>
               <button
                 onClick={() => {
+                  if (!reportingAllowed) {
+                    onRequireReportingAuth?.();
+                    return;
+                  }
                   setMenuOpen(false);
                   setIsOpen(true);
                 }}

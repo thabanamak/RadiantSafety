@@ -1,44 +1,121 @@
 "use client";
 
-import { useState } from "react";
-import { X, Mail, Lock, User, Eye, EyeOff, Shield } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Mail, Lock, User, Eye, EyeOff, Shield, Calendar } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { AuthUser } from "@/components/TopNav";
+import {
+  registerAccount,
+  loginAccount,
+  saveSession,
+  ageFromDateOfBirth,
+  instantDemoLogin,
+} from "@/lib/auth-storage";
 
 type AuthTab = "login" | "signup";
 
 interface AuthModalProps {
   isOpen: boolean;
+  initialTab?: AuthTab;
   onClose: () => void;
-  onAuth: (user: { name: string; email: string }) => void;
+  onAuth: (user: AuthUser) => void;
 }
 
-export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
-  const [tab, setTab] = useState<AuthTab>("login");
+export default function AuthModal({
+  isOpen,
+  initialTab = "login",
+  onClose,
+  onAuth,
+}: AuthModalProps) {
+  const [tab, setTab] = useState<AuthTab>(initialTab);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
     email: "",
     password: "",
+    dateOfBirth: "",
+    confirm18: false,
   });
+
+  useEffect(() => {
+    if (isOpen) {
+      setTab(initialTab);
+      setError(null);
+    }
+  }, [isOpen, initialTab]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-
-    // TODO: Replace with Supabase auth / FastAPI call
-    await new Promise((r) => setTimeout(r, 800));
-
-    onAuth({ name: form.name || form.email.split("@")[0], email: form.email });
-    setIsLoading(false);
-    setForm({ name: "", email: "", password: "" });
+  const handleDemoLoginClick = () => {
+    setError(null);
+    const user = instantDemoLogin();
+    onAuth(user);
+    setForm({ name: "", email: "", password: "", dateOfBirth: "", confirm18: false });
     onClose();
   };
 
-  const updateField = (field: keyof typeof form, value: string) =>
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      if (tab === "signup") {
+        if (!form.confirm18) {
+          setError("Please confirm you are 18 or older.");
+          setIsLoading(false);
+          return;
+        }
+        if (!form.dateOfBirth) {
+          setError("Date of birth is required.");
+          setIsLoading(false);
+          return;
+        }
+        const age = ageFromDateOfBirth(form.dateOfBirth);
+        if (age < 18) {
+          setError("You must be 18 or older to register as a reporter.");
+          setIsLoading(false);
+          return;
+        }
+
+        await new Promise((r) => setTimeout(r, 400));
+        const result = registerAccount({
+          email: form.email,
+          password: form.password,
+          name: form.name,
+          dateOfBirth: form.dateOfBirth,
+        });
+        if (!result.ok) {
+          setError(result.error);
+          setIsLoading(false);
+          return;
+        }
+        saveSession(result.user);
+        onAuth(result.user);
+        setForm({ name: "", email: "", password: "", dateOfBirth: "", confirm18: false });
+        onClose();
+      } else {
+        await new Promise((r) => setTimeout(r, 400));
+        const result = loginAccount(form.email, form.password);
+        if (!result.ok) {
+          setError(result.error);
+          setIsLoading(false);
+          return;
+        }
+        saveSession(result.user);
+        onAuth(result.user);
+        setForm({ name: "", email: "", password: "", dateOfBirth: "", confirm18: false });
+        onClose();
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updateField = (field: keyof typeof form, value: string | boolean) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
   return (
@@ -49,7 +126,6 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
       />
 
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-radiant-border bg-radiant-surface p-6 shadow-2xl">
-        {/* Header */}
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-radiant-red" />
@@ -63,12 +139,15 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="mb-6 flex rounded-xl bg-radiant-card p-1">
           {(["login", "signup"] as AuthTab[]).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              type="button"
+              onClick={() => {
+                setTab(t);
+                setError(null);
+              }}
               className={cn(
                 "flex-1 rounded-lg py-2 text-xs font-semibold transition-all",
                 tab === t
@@ -81,16 +160,43 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
           ))}
         </div>
 
-        {/* Form */}
+        <button
+          type="button"
+          onClick={handleDemoLoginClick}
+          className="mb-4 w-full rounded-xl border border-amber-500/50 bg-amber-500/15 py-2.5 text-sm font-semibold text-amber-100 shadow-sm transition-all hover:border-amber-400/60 hover:bg-amber-500/25"
+        >
+          Demo login
+        </button>
+
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {tab === "signup" && (
-            <InputField
-              icon={User}
-              type="text"
-              placeholder="Display name"
-              value={form.name}
-              onChange={(v) => updateField("name", v)}
-            />
+            <>
+              <InputField
+                icon={User}
+                type="text"
+                placeholder="Display name"
+                value={form.name}
+                onChange={(v) => updateField("name", v)}
+              />
+              <div className="flex items-center gap-2.5 rounded-xl border border-radiant-border bg-radiant-card px-3 py-2.5 transition-colors focus-within:border-gray-500">
+                <Calendar className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+                <div className="flex flex-1 flex-col gap-0.5">
+                  <label className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                    Date of birth
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={form.dateOfBirth}
+                    onChange={(e) => updateField("dateOfBirth", e.target.value)}
+                    className="w-full bg-transparent text-xs text-gray-200 outline-none"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] leading-relaxed text-gray-500">
+                You must be 18 or older. Incident reporting is only available to verified adult accounts.
+              </p>
+            </>
           )}
 
           <InputField
@@ -125,6 +231,27 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
             </button>
           </div>
 
+          {tab === "signup" && (
+            <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-radiant-border bg-radiant-card/80 px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={form.confirm18}
+                onChange={(e) => updateField("confirm18", e.target.checked)}
+                className="mt-0.5 rounded border-radiant-border"
+              />
+              <span className="text-[11px] leading-relaxed text-gray-400">
+                I confirm I am <span className="font-semibold text-gray-200">18 years of age or older</span> and the
+                date of birth above is accurate.
+              </span>
+            </label>
+          )}
+
+          {error && (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+              {error}
+            </p>
+          )}
+
           {tab === "login" && (
             <button
               type="button"
@@ -138,7 +265,8 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
             type="submit"
             disabled={isLoading}
             className={cn(
-              "mt-2 w-full rounded-xl py-2.5 text-sm font-semibold transition-all",
+              "w-full rounded-xl py-2.5 text-sm font-semibold transition-all",
+              "mt-2",
               isLoading
                 ? "bg-gray-800 text-gray-600"
                 : "bg-radiant-red text-white shadow-lg shadow-red-500/20 hover:shadow-red-500/40"
@@ -148,11 +276,10 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
               ? "Please wait..."
               : tab === "login"
                 ? "Log In"
-                : "Create Account"}
+                : "Create verified account"}
           </button>
         </form>
 
-        {/* Divider */}
         <div className="my-5 flex items-center gap-3">
           <div className="h-px flex-1 bg-radiant-border" />
           <span className="text-[10px] uppercase tracking-widest text-gray-600">
@@ -161,17 +288,15 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
           <div className="h-px flex-1 bg-radiant-border" />
         </div>
 
-        {/* Social buttons */}
         <div className="flex gap-2">
           <SocialButton label="Google" />
           <SocialButton label="GitHub" />
         </div>
 
-        {/* Reputation hint */}
         <p className="mt-5 text-center text-[11px] leading-relaxed text-gray-600">
           {tab === "signup"
-            ? "Create an account to start building your safety reputation and join the trusted reporter network."
-            : "Log in to access your reputation score and contribute verified reports."}
+            ? "Sign up with your real date of birth. Only 18+ verified accounts can file incident reports."
+            : "Log in with the email and password you used at sign up."}
         </p>
       </div>
     </div>

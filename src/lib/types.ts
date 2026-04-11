@@ -11,7 +11,11 @@ export interface UserReport {
   upvotes: number;
   downvotes: number;
   createdAt: Date;
+  /** @deprecated Use reporterId — kept for older mock data */
   userId: string;
+  /** Account id of reporter (matches AuthUser.id). */
+  reporterId: string;
+  reporterDisplayName: string;
 }
 
 export type MapIncidentPoint = Pick<

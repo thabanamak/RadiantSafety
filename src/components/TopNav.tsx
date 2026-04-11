@@ -7,8 +7,12 @@ import type { UserReputation } from "@/lib/types";
 import SearchBar from "./SearchBar";
 
 export interface AuthUser {
+  /** Stable id (normalized email) for linking reports */
+  id: string;
   name: string;
   email: string;
+  /** Must be true to submit incident quick reports (18+ verified signup). */
+  over18Verified: boolean;
 }
 
 export type DashboardTab = "news";
@@ -23,6 +27,8 @@ interface TopNavProps {
   onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
   onLoginClick: () => void;
   onSignupClick: () => void;
+  /** One-click demo admin (18+ verified) for testing reports */
+  onDemoLogin?: () => void;
   onLogout: () => void;
 }
 
@@ -35,6 +41,7 @@ export default function TopNav({
   onSearchSelectArea,
   onLoginClick,
   onSignupClick,
+  onDemoLogin,
   onLogout,
 }: TopNavProps) {
   return (
@@ -70,9 +77,21 @@ export default function TopNav({
         {/* Right: Auth */}
         <div className="flex shrink-0 items-center gap-4">
           {user ? (
-            <AccountDropdown user={user} onLogout={onLogout} />
+            <AccountDropdown
+              user={user}
+              onLogout={onLogout}
+            />
           ) : (
             <div className="flex items-center gap-2">
+              {onDemoLogin && (
+                <button
+                  type="button"
+                  onClick={onDemoLogin}
+                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:border-amber-400/60 hover:bg-amber-500/20"
+                >
+                  Demo login
+                </button>
+              )}
               <button
                 onClick={onLoginClick}
                 className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
@@ -167,8 +186,13 @@ function AccountDropdown({
         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-radiant-red/20 text-[10px] font-bold text-radiant-red">
           {initials}
         </div>
-        <span className="hidden text-xs font-medium text-gray-300 lg:block">
+        <span className="hidden items-center gap-2 text-xs font-medium text-gray-300 lg:flex">
           {user.name}
+          {user.over18Verified && (
+            <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-400">
+              18+ verified
+            </span>
+          )}
         </span>
         <ChevronDown
           className={cn(
@@ -183,6 +207,11 @@ function AccountDropdown({
           <div className="px-3 py-2">
             <p className="text-xs font-semibold text-gray-200">{user.name}</p>
             <p className="text-[11px] text-gray-500">{user.email}</p>
+            {user.over18Verified && (
+              <p className="mt-1.5 text-[10px] font-medium text-emerald-400/90">
+                ✓ Eligible to file incident reports
+              </p>
+            )}
           </div>
           <div className="my-1 h-px bg-radiant-border" />
           <button
