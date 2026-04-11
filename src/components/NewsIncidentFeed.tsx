@@ -197,7 +197,7 @@ export default function NewsIncidentFeed({
               }}
               className={cn(
                 "text-left rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600 outline-none focus-visible:ring-2 focus-visible:ring-radiant-red/50",
-                (item.latitude == null || item.longitude == null) && "cursor-default"
+                (item.latitude == null || item.longitude == null) ? "cursor-default" : "cursor-pointer"
               )}
             >
               <div className="flex items-start justify-between gap-3">
@@ -215,7 +215,11 @@ export default function NewsIncidentFeed({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onViewMap({ latitude: item.latitude as number, longitude: item.longitude as number, zoom: 16 });
+                        onViewMap({
+                          latitude: item.latitude as number,
+                          longitude: item.longitude as number,
+                          zoom: 16,
+                        });
                       }}
                       className="rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-[11px] font-semibold text-gray-300 hover:border-gray-500 hover:text-white"
                       aria-label="Fly to map"
@@ -223,7 +227,6 @@ export default function NewsIncidentFeed({
                       Fly
                     </button>
                   )}
-
                   {item.url && (
                     <a
                       href={item.url}

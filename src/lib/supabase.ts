@@ -1,7 +1,12 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 function readSupabaseEnv() {
-  const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseUrl = (
+    process.env.SUPABASE_URL ??
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??
+    ""
+  ).replace(/\/$/, "");
+
   const supabaseKey =
     process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
   return { supabaseUrl, supabaseKey };

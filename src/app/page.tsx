@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, use } from "react";
+import { useState, useCallback, useEffect, use, useRef } from "react";
 import RadiantMap, { type DroppedPin } from "@/components/RadiantMap";
 import TopNav from "@/components/TopNav";
 import type { AuthUser, IncidentTab } from "@/components/TopNav";
@@ -14,6 +14,15 @@ import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
 import IncidentFeed from "@/components/IncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
+import type { SOSAlert } from "@/components/SOSAreaPanel";
+import type { FriendLocation } from "@/components/RadiantMap";
+import SOSController from "@/features/sos/SOSController";
+import FindMyController from "@/features/find-my/FindMyController";
+import DirectionsController from "@/features/directions/DirectionsController";
+import { useUserLocation } from "@/hooks/useUserLocation";
+import { useHeartbeat } from "@/hooks/useHeartbeat";
+import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 interface VicPolIncident {
   id: string;
@@ -73,6 +82,34 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   const [dropPinMode, setDropPinMode] = useState(false);
   const [droppedPin, setDroppedPin] = useState<DroppedPin | null>(null);
   const [gpsPin, setGpsPin] = useState<DroppedPin | null>(null);
+
+  // Live device location (Phase 3) — "you are here" cyan dot
+  const { coords: userCoords, permission: locationPermission } = useUserLocation();
+  const hasCenteredOnUser = useRef(false);
+  const [locating, setLocating] = useState(false);
+  const [locationDenied, setLocationDenied] = useState(false);
+
+  // Fly to user's location on first GPS fix
+  useEffect(() => {
+    if (userCoords && !hasCenteredOnUser.current) {
+      setFlyTarget({ latitude: userCoords.latitude, longitude: userCoords.longitude, zoom: 15 });
+      hasCenteredOnUser.current = true;
+    }
+  }, [userCoords]);
+
+  // Heartbeat (Phase 4) — passive 60s ping to user_pulse
+  useHeartbeat({ coords: userCoords, mode: "passive" });
+
+  // SOS — sheet open state is owned here so the FAB can trigger it;
+  // all other SOS logic lives in SOSController
+  const [showSOSSheet, setShowSOSSheet] = useState(false);
+  const [sosMapAlerts, setSosMapAlerts] = useState<SOSAlert[]>([]);
+
+  // Find My — friend locations for the map; populated by FindMyController
+  const [friendLocations, setFriendLocations] = useState<FriendLocation[]>([]);
+
+  // Directions — active route for the map; populated by DirectionsController
+  const [activeRoute, setActiveRoute] = useState<{ geometry: GeoJSON.LineString } | null>(null);
 
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
@@ -209,6 +246,33 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     category: r.category,
   }));
 
+  const handleLocateMe = useCallback(() => {
+    if (!navigator.geolocation) return;
+
+    if (userCoords) {
+      setFlyTarget({ latitude: userCoords.latitude, longitude: userCoords.longitude, zoom: 16 });
+      setLocationDenied(false);
+      return;
+    }
+
+    setLocating(true);
+    setLocationDenied(false);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setFlyTarget({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, zoom: 16 });
+        setLocating(false);
+        setLocationDenied(false);
+      },
+      (err) => {
+        setLocating(false);
+        if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
+          setLocationDenied(true);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [userCoords]);
+
   function activeMapPoints(): MapIncidentPoint[] {
     if (activeIncidentTab === "user-reported") return userReportedMapPoints;
     if (activeIncidentTab === "official") return [...supabaseMapPoints, ...vicpolMapPoints];
@@ -226,10 +290,28 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           onPinDropped={handlePinDropped}
           gpsPin={gpsPin}
           droppedPin={droppedPin}
+          userLocation={userCoords ? { latitude: userCoords.latitude, longitude: userCoords.longitude } : null}
+          sosAlerts={sosMapAlerts}
+          friendLocations={friendLocations}
+          activeRoute={activeRoute}
         />
       </div>
 
       <div className="pointer-events-none absolute inset-0 z-10">
+        {/* Left panel — SOS in the Area (and all SOS sheets) */}
+        <div className="pointer-events-auto absolute left-0 top-[92px] z-40">
+          <SOSController
+            userCoords={userCoords}
+            onFlyTo={setFlyTarget}
+            onAlertsChange={setSosMapAlerts}
+            onAlertResolved={(alertId) =>
+              setSosMapAlerts((prev) => prev.filter((a) => a.id !== alertId))
+            }
+            open={showSOSSheet}
+            onOpenChange={setShowSOSSheet}
+          />
+        </div>
+
         <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
           <AreaIncidentSummary
             className="pointer-events-auto"
@@ -243,13 +325,12 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         <TopNav
           reputation={currentUser}
           user={authUser}
-          reports={submittedUserReports}
+          mapCenter={mapCenter}
           activeIncidentTab={activeIncidentTab}
           onIncidentTabChange={setActiveIncidentTab}
-          onSearchSelectIncident={handleViewMap}
           onSearchSelectArea={handleSelectArea}
-          onLoginClick={() => setModalState("login")}
-          onSignupClick={() => setModalState("signup")}
+          onLoginClick={() => {}}
+          onSignupClick={() => {}}
           onLogout={handleLogout}
         />
 
@@ -301,7 +382,71 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         onDropPinMode={handleDropPinMode}
         droppedPin={droppedPin}
         onReportSubmitted={handleReportSubmitted}
+        onSOSPress={() => setShowSOSSheet(true)}
       />
+
+      {/* Feature controllers — self-contained, each owns its own UI and data */}
+      <FindMyController
+        userCoords={userCoords}
+        onFriendLocationsChange={setFriendLocations}
+      />
+      <DirectionsController
+        userCoords={userCoords}
+        onRouteChange={setActiveRoute}
+      />
+
+      {/* Locate-me button — bottom-left, always clickable */}
+      <button
+        onClick={handleLocateMe}
+        title={
+          locating
+            ? "Requesting your location…"
+            : userCoords
+            ? "Centre map on your location"
+            : locationPermission === "denied" || locationDenied
+            ? "Tap to retry — you may need to unblock location in your browser"
+            : "Enable current location"
+        }
+        className={cn(
+          "pointer-events-auto fixed bottom-6 left-6 z-50 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-all hover:scale-105 active:scale-95",
+          locating
+            ? "border-radiant-border bg-radiant-surface/90 text-gray-300"
+            : locationDenied
+            ? "border-amber-500/60 bg-radiant-surface/90 text-amber-400 hover:border-amber-400 shadow-amber-500/20"
+            : userCoords
+            ? "border-cyan-500/40 bg-radiant-surface/90 text-cyan-400 hover:border-cyan-400 shadow-cyan-500/20"
+            : "border-radiant-border bg-radiant-surface/90 text-gray-300 hover:border-gray-500 hover:text-white"
+        )}
+        aria-label="Locate me"
+      >
+        {locating ? (
+          <Loader2 className="h-5 w-5 animate-spin" />
+        ) : locationDenied ? (
+          <LocateOff className="h-5 w-5" />
+        ) : (
+          <LocateFixed className={cn("h-5 w-5", userCoords && "drop-shadow-[0_0_6px_rgba(34,211,238,0.7)]")} />
+        )}
+      </button>
+
+      {/* Location denied banner */}
+      {locationDenied && (
+        <div className="pointer-events-auto fixed bottom-[72px] left-6 z-50 w-72 rounded-2xl border border-amber-500/30 bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-amber-300">Location access blocked</p>
+            <button
+              onClick={() => setLocationDenied(false)}
+              className="rounded p-0.5 text-gray-500 hover:text-gray-300 transition-colors"
+              aria-label="Dismiss"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <p className="text-[11px] leading-relaxed text-gray-400">
+            To enable your location, click the{" "}
+            <span className="font-semibold text-gray-200">lock icon</span> in your browser&apos;s address bar, set <span className="font-semibold text-gray-200">Location</span> to Allow, then tap the button again.
+          </p>
+        </div>
+      )}
 
       {vicpolLoading && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-5 pb-6">

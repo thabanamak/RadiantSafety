@@ -197,11 +197,11 @@ export default function AreaIncidentSummary({
           <div className="mt-3 space-y-2 text-[11px] text-gray-500">
             <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
               <p className="font-semibold text-red-300">High (8–10)</p>
-              <p className="mt-0.5">Keywords like: homicide, murder, shooting, firearm, stabbing, sexual assault.</p>
+              <p className="mt-0.5">Keywords like: homicide, murder, shooting, firearm, stabbing, sexual assault, arson.</p>
             </div>
             <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
               <p className="font-semibold text-amber-200">Mid (5–7)</p>
-              <p className="mt-0.5">Keywords like: fatal crash, fire, drug, aggravated burglary, arson.</p>
+              <p className="mt-0.5">Keywords like: fatal crash, fire, drug, aggravated burglary, carjacking.</p>
             </div>
             <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
               <p className="font-semibold text-gray-200">Low (1–4)</p>
@@ -210,7 +210,7 @@ export default function AreaIncidentSummary({
           </div>
 
           <p className="mt-3 text-[10px] text-gray-600">
-            Note: this is a heuristic based on headlines, not a legal classification.
+            Note: SOS alerts are never included in these counts — they are not crime data.
           </p>
         </div>
       )}

@@ -49,6 +49,8 @@ interface QuickReportFABProps {
   droppedPin?: { latitude: number; longitude: number } | null;
   /** Called when the user completes submit (location required). */
   onReportSubmitted?: (report: SubmittedReportPayload) => void;
+  /** Called when the SOS button is tapped — opens the issue selection sheet */
+  onSOSPress?: () => void;
 }
 
 export default function QuickReportFAB({
@@ -56,6 +58,7 @@ export default function QuickReportFAB({
   onDropPinMode,
   droppedPin,
   onReportSubmitted,
+  onSOSPress,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -166,15 +169,12 @@ export default function QuickReportFAB({
     );
   }, [onPinLocation]);
 
-  const handleEmergencyPing = useCallback(async () => {
+  const handleEmergencyPing = useCallback(() => {
     setMenuOpen(false);
     setEmergencyPinging(true);
-    try {
-      handleGPS();
-    } finally {
-      window.setTimeout(() => setEmergencyPinging(false), 1600);
-    }
-  }, [handleGPS]);
+    onSOSPress?.();
+    window.setTimeout(() => setEmergencyPinging(false), 1600);
+  }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
     setPinnedLocation(null);

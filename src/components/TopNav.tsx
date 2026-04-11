@@ -3,7 +3,7 @@
 import { LogIn, UserPlus, LogOut, ChevronDown, ShieldAlert, Users } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
-import type { UserReputation, UserReport } from "@/lib/types";
+import type { UserReputation } from "@/lib/types";
 import SearchBar from "./SearchBar";
 
 export interface AuthUser {
@@ -17,10 +17,9 @@ export type IncidentTab = "official" | "user-reported";
 interface TopNavProps {
   reputation: UserReputation;
   user: AuthUser | null;
-  reports: UserReport[];
+  mapCenter?: { latitude: number; longitude: number } | null;
   activeIncidentTab: IncidentTab;
   onIncidentTabChange: (tab: IncidentTab) => void;
-  onSearchSelectIncident: (report: UserReport) => void;
   onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
   onLoginClick: () => void;
   onSignupClick: () => void;
@@ -30,10 +29,9 @@ interface TopNavProps {
 export default function TopNav({
   reputation,
   user,
-  reports,
+  mapCenter,
   activeIncidentTab,
   onIncidentTabChange,
-  onSearchSelectIncident,
   onSearchSelectArea,
   onLoginClick,
   onSignupClick,
@@ -97,8 +95,7 @@ export default function TopNav({
       {/* Row 2: Big centered search */}
       <div className="flex flex-col items-center gap-3 px-5">
         <SearchBar
-          reports={reports}
-          onSelectIncident={onSearchSelectIncident}
+          mapCenter={mapCenter}
           onSelectArea={onSearchSelectArea}
         />
 
