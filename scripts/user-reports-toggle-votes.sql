@@ -1,131 +1,13 @@
 -- ============================================================================
--- Greenfield setup: `user_reports` + vote toggling (matches RadiantSafety app).
--- Run once in Supabase → SQL Editor.
+-- Per-user toggle votes on `user_reports` + replace increment-only RPC.
+-- Run in Supabase SQL Editor after `user_reports` exists.
 --
--- Includes:
---   • public.user_reports — trust / trust_label generated columns; severity; RLS
---   • public.user_report_votes — one vote per user per report
---   • public.toggle_user_report_vote — RPC used by the web app
---
--- Destroys existing data: DROP CASCADE removes dependent objects (votes, etc.).
--- After this, enable Realtime on `user_reports` in Dashboard → Database →
--- Replication if you want live feed updates without refresh.
+-- Each signed-in user has at most one vote per report (`up` or `down`).
+-- Clicking the same button again removes the vote; clicking the opposite
+-- switches the vote. `user_reports.trust` / `trust_label` stay generated.
 -- ============================================================================
 
--- ---------------------------------------------------------------------------
--- 1. Core table
--- ---------------------------------------------------------------------------
-drop table if exists public.user_reports cascade;
-
-create table public.user_reports (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
-  latitude double precision not null,
-  longitude double precision not null,
-  description text not null default '',
-  image_url text,
-  category text not null,
-  upvotes integer not null default 0,
-  downvotes integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint user_reports_category_allowed check (
-    category in (
-      'Gang Activity',
-      'Unsafe Vibe',
-      'Poor Lighting',
-      'Theft',
-      'Harassment',
-      'Suspicious Activity',
-      'Vandalism',
-      'Drug Activity'
-    )
-  ),
-  constraint user_reports_upvotes_nonnegative check (upvotes >= 0),
-  constraint user_reports_downvotes_nonnegative check (downvotes >= 0),
-  severity smallint not null generated always as (
-    case category
-      when 'Gang Activity' then 10
-      when 'Harassment' then 9
-      when 'Poor Lighting' then 8
-      when 'Drug Activity' then 8
-      when 'Unsafe Vibe' then 7
-      when 'Theft' then 7
-      when 'Vandalism' then 6
-      when 'Suspicious Activity' then 5
-      else 5
-    end
-  ) stored,
-  trust integer not null generated always as (10 + upvotes - downvotes) stored,
-  trust_label text not null generated always as (
-    case
-      when (10 + upvotes - downvotes) >= 20 then 'Trustworthy'
-      when (10 + upvotes - downvotes) >= 15 then 'Semi-trustworthy'
-      when (10 + upvotes - downvotes) >= 6 then 'Medium trust'
-      else 'Untrustworthy'
-    end
-  ) stored
-);
-
-create index user_reports_location_idx on public.user_reports (latitude, longitude);
-create index user_reports_user_idx on public.user_reports (user_id);
-
-comment on table public.user_reports is 'Community reports; trust = 10+up−down; severity from category.';
-comment on column public.user_reports.trust is 'Generated; row removed by trigger if < 0.';
-comment on column public.user_reports.trust_label is 'Trustworthy ≥20; Semi 15–19; Medium 6–14; else Untrustworthy.';
-
--- Remove rows when trust would go negative (votes go through toggle RPC).
-create or replace function public.user_reports_delete_if_negative_trust()
-returns trigger
-language plpgsql
-as $$
-begin
-  if (10 + new.upvotes - new.downvotes) < 0 then
-    delete from public.user_reports where id = new.id;
-    return null;
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists user_reports_negative_trust_after on public.user_reports;
-create trigger user_reports_negative_trust_after
-  after insert or update of upvotes, downvotes
-  on public.user_reports
-  for each row
-  when (10 + new.upvotes - new.downvotes < 0)
-  execute function public.user_reports_delete_if_negative_trust();
-
-alter table public.user_reports enable row level security;
-
-drop policy if exists "user_reports_select_authenticated" on public.user_reports;
-create policy "user_reports_select_authenticated"
-  on public.user_reports for select to authenticated using (true);
-
-drop policy if exists "user_reports_select_anon" on public.user_reports;
-create policy "user_reports_select_anon"
-  on public.user_reports for select to anon using (true);
-
-drop policy if exists "user_reports_insert_own" on public.user_reports;
-create policy "user_reports_insert_own"
-  on public.user_reports for insert to authenticated
-  with check (auth.uid() = user_id);
-
-drop policy if exists "user_reports_update_own" on public.user_reports;
-create policy "user_reports_update_own"
-  on public.user_reports for update to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists "user_reports_delete_own" on public.user_reports;
-create policy "user_reports_delete_own"
-  on public.user_reports for delete to authenticated
-  using (auth.uid() = user_id);
-
--- ---------------------------------------------------------------------------
--- 2. Per-user votes (app: fetch + toggle)
--- ---------------------------------------------------------------------------
-create table public.user_report_votes (
+create table if not exists public.user_report_votes (
   user_id uuid not null references auth.users (id) on delete cascade,
   report_id uuid not null references public.user_reports (id) on delete cascade,
   side text not null check (side in ('up', 'down')),
@@ -133,7 +15,7 @@ create table public.user_report_votes (
   primary key (user_id, report_id)
 );
 
-create index user_report_votes_report_id_idx
+create index if not exists user_report_votes_report_id_idx
   on public.user_report_votes (report_id);
 
 alter table public.user_report_votes enable row level security;
@@ -160,7 +42,7 @@ create policy "user_report_votes_delete_own"
   using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- 3. Toggle vote RPC (SECURITY DEFINER updates counts; RLS bypassed inside)
+-- Toggle vote (SECURITY DEFINER — adjusts user_reports + user_report_votes)
 -- ---------------------------------------------------------------------------
 drop function if exists public.toggle_user_report_vote(uuid, text);
 
@@ -222,6 +104,7 @@ begin
       where r.id = p_report_id;
     end if;
   else
+    -- p_side = 'down'
     if cur = 'down' then
       delete from public.user_report_votes
       where user_id = uid and report_id = p_report_id;
@@ -272,6 +155,7 @@ $$;
 revoke all on function public.toggle_user_report_vote(uuid, text) from public;
 grant execute on function public.toggle_user_report_vote(uuid, text) to authenticated;
 
+-- Deprecate old increment-only RPC (optional: drop entirely)
 drop function if exists public.vote_user_report(uuid, text);
 
 comment on function public.toggle_user_report_vote(uuid, text) is

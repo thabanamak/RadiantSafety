@@ -10,7 +10,6 @@ import {
   Users,
   Navigation,
   UserCircle,
-  ClipboardList,
   Settings,
   Shield,
   Hospital,
@@ -41,7 +40,6 @@ interface TopNavProps {
     center: [number, number];
   }) => void;
   onLogout: () => void;
-  onViewPastReports: () => void;
   directionsMode?: boolean;
   onDirectionsModeChange?: (active: boolean) => void;
   showPoliceOnMap: boolean;
@@ -58,7 +56,6 @@ export default function TopNav({
   onIncidentTabChange,
   onSearchSelectArea,
   onLogout,
-  onViewPastReports,
   directionsMode = false,
   onDirectionsModeChange,
   showPoliceOnMap,
@@ -100,7 +97,6 @@ export default function TopNav({
               user={user}
               reputation={reputation}
               onLogout={onLogout}
-              onViewPastReports={onViewPastReports}
             />
           ) : (
             <div className="flex items-center gap-2">
@@ -312,18 +308,6 @@ function AccountDropdown({
             <Settings className="h-3.5 w-3.5 shrink-0 text-gray-500" />
             Manage your profile
           </Link>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onViewPastReports();
-              setOpen(false);
-            }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-radiant-card hover:text-white"
-          >
-            <ClipboardList className="h-3.5 w-3.5 shrink-0 text-gray-500" />
-            View past reports
-          </button>
 
           <div className="my-1 h-px bg-radiant-border" />
           <button
