@@ -1,18 +1,16 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Loader2, MapPin, X } from "lucide-react";
+import { Loader2, MapPin, Building2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { SelectedDestination } from "@/components/ContextualDirectionsCards";
-
-const VICTORIA_BBOX = "140.9,-39.2,150.0,-33.9";
-
-interface GeocodingFeature {
-  id: string;
-  text: string;
-  place_name: string;
-  center: [number, number];
-}
+import {
+  searchboxSuggest,
+  searchboxRetrieve,
+  newSessionToken,
+  type SearchSuggestion,
+  MELB_CBD_PROXIMITY,
+} from "@/lib/mapbox-forward-geocode";
 
 type Props = {
   id: string;
@@ -30,44 +28,37 @@ export default function RouteLocationField({
   mapCenter,
   value,
   onChange,
-  placeholder = "Search address or place…",
+  placeholder = "Station, landmark, suburb, or address…",
   disabled = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [isFocused, setIsFocused] = useState(false);
-  const [results, setResults] = useState<GeocodingFeature[]>([]);
+  const [results, setResults] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionTokenRef = useRef<string>(newSessionToken());
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   const showDropdown = isFocused && query.trim().length > 0 && !value;
 
-  const geocode = useCallback(
+  const suggest = useCallback(
     async (q: string) => {
-      if (!token || q.length === 0) {
-        setResults([]);
-        return;
-      }
+      if (!token || q.length === 0) { setResults([]); return; }
       abortRef.current?.abort();
       abortRef.current = new AbortController();
       setLoading(true);
       try {
         const proximity = mapCenter
           ? `${mapCenter.longitude},${mapCenter.latitude}`
-          : "144.9631,-37.8136";
-        const url = new URL(
-          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
-        );
-        url.searchParams.set("access_token", token);
-        url.searchParams.set("country", "au");
-        url.searchParams.set("bbox", VICTORIA_BBOX);
-        url.searchParams.set("proximity", proximity);
-        url.searchParams.set("types", "place,locality,neighborhood,district,poi,address");
-        url.searchParams.set("limit", "6");
-        const res = await fetch(url.toString(), { signal: abortRef.current.signal });
-        const data = (await res.json()) as { features?: GeocodingFeature[] };
-        setResults(data.features ?? []);
+          : MELB_CBD_PROXIMITY;
+        const items = await searchboxSuggest(q, token, {
+          sessionToken: sessionTokenRef.current,
+          proximity,
+          limit: 6,
+          signal: abortRef.current.signal,
+        });
+        setResults(items);
       } catch (e) {
         if ((e as Error).name !== "AbortError") setResults([]);
       } finally {
@@ -84,11 +75,9 @@ export default function RouteLocationField({
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => geocode(query.trim()), 280);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [query, value, geocode]);
+    debounceRef.current = setTimeout(() => suggest(query.trim()), 280);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, value, suggest]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -101,16 +90,25 @@ export default function RouteLocationField({
   }, []);
 
   const pick = useCallback(
-    (f: GeocodingFeature) => {
-      onChange({
-        name: f.place_name,
-        coordinates: f.center,
-      });
-      setQuery("");
-      setResults([]);
-      setIsFocused(false);
+    async (s: SearchSuggestion) => {
+      if (!token) return;
+      setLoading(true);
+      try {
+        const loc = await searchboxRetrieve(s.mapbox_id, token, sessionTokenRef.current);
+        sessionTokenRef.current = newSessionToken();
+        if (!loc) return;
+        const name = s.place_formatted
+          ? `${s.name}, ${s.place_formatted}`
+          : s.name;
+        onChange({ name, coordinates: loc.coordinates });
+      } finally {
+        setLoading(false);
+        setQuery("");
+        setResults([]);
+        setIsFocused(false);
+      }
     },
-    [onChange]
+    [token, onChange]
   );
 
   return (
@@ -159,17 +157,25 @@ export default function RouteLocationField({
               className="absolute z-[80] mt-1 max-h-48 w-full overflow-auto rounded-xl border border-white/12 bg-zinc-950 py-1 shadow-2xl"
               role="listbox"
             >
-              {results.map((f) => (
-                <li key={f.id} role="option">
+              {results.map((s) => (
+                <li key={s.mapbox_id} role="option">
                   <button
                     type="button"
                     disabled={disabled}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => pick(f)}
-                    className="flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-white/10"
+                    onClick={() => void pick(s)}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-white/10"
                   >
-                    <span className="font-medium text-white">{f.text}</span>
-                    <span className="truncate text-[11px] text-zinc-500">{f.place_name}</span>
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/6">
+                      {s.feature_type === "poi"
+                        ? <Building2 className="h-3.5 w-3.5 text-cyan-400" />
+                        : <MapPin className="h-3.5 w-3.5 text-zinc-400" />
+                      }
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block font-medium text-white">{s.name}</span>
+                      <span className="block truncate text-[11px] text-zinc-500">{s.place_formatted}</span>
+                    </div>
                   </button>
                 </li>
               ))}

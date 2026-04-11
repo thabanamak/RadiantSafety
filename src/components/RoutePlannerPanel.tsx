@@ -84,7 +84,10 @@ export default function RoutePlannerPanel({
             </div>
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Directions planner</p>
-              <p className="mt-0.5 text-xs text-zinc-400">Set start and end. Start defaults to your current location.</p>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                Pick two spots (stations, malls, landmarks, suburbs, or street addresses). Start defaults to your
+                location.
+              </p>
             </div>
           </div>
           <button
@@ -105,7 +108,7 @@ export default function RoutePlannerPanel({
               mapCenter={mapCenter ? { latitude: mapCenter.latitude, longitude: mapCenter.longitude } : null}
               value={routeStartCustom}
               onChange={onRouteStartCustomChange}
-              placeholder="Search start, or leave as current location"
+              placeholder="From: station, landmark, suburb…"
               disabled={routeLoading}
             />
             {!routeStartCustom && (
@@ -122,7 +125,7 @@ export default function RoutePlannerPanel({
             mapCenter={mapCenter ? { latitude: mapCenter.latitude, longitude: mapCenter.longitude } : null}
             value={routeEnd}
             onChange={onRouteEndChange}
-            placeholder="Search destination…"
+            placeholder="To: station, landmark, suburb…"
             disabled={routeLoading}
           />
         </div>

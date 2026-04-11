@@ -2,6 +2,7 @@
 .env
 .env.local
 .env*.local
+pas
 *.pem
 *.key
 # Supabase CLI project dir (repo root only — not `src/lib/supabase/` app code)
@@ -33,6 +34,7 @@ npm-debug.log*
 # --- DATA & LOGS ---
 *.log
 .DS_Store
+backend/cache/
 # Ensure your CSV crime data is NOT ignored if they need it to run the script
 # If you want them to have the crime file, make sure it's not named 'data.log' or similar
 

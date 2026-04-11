@@ -35,7 +35,7 @@ export function computeClientSafeRoute(
 export type SafeRouteEngineMode = "server" | "client" | "hybrid";
 
 export function readSafeRouteEngineMode(): SafeRouteEngineMode {
-  const v = (process.env.NEXT_PUBLIC_SAFE_ROUTE_ENGINE ?? "server").toLowerCase();
-  if (v === "client" || v === "hybrid") return v;
-  return "server";
+  const v = (process.env.NEXT_PUBLIC_SAFE_ROUTE_ENGINE ?? "hybrid").toLowerCase();
+  if (v === "client" || v === "server") return v;
+  return "hybrid"; // default — browser A* first, then upgrade with Python backend if available
 }

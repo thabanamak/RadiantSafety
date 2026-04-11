@@ -39,6 +39,7 @@ export async function POST(request: Request) {
     const detail = errorChain(e);
     return NextResponse.json(
       {
+        error_code: "BACKEND_UNAVAILABLE",
         detail,
         attemptedUrl: routeUrl,
         hint: "Next.js could not reach the Python routing service (connection refused or DNS).",

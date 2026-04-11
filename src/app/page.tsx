@@ -493,7 +493,7 @@ export default function Dashboard() {
 
     try {
       const engineMode = readSafeRouteEngineMode();
-      let usedClientEngine = false;
+      let clientPathComputed = false;
 
       if (engineMode === "client" || engineMode === "hybrid") {
         let clientPath: [number, number][] | null = null;
@@ -508,66 +508,93 @@ export default function Dashboard() {
         }
         if (clientPath) {
           setSafeRouteData(clientPath);
-          usedClientEngine = true;
+          clientPathComputed = true;
           if (engineMode === "client") {
             return;
           }
+          // hybrid: client path is shown immediately; continue to try server upgrade below
         } else if (engineMode === "client") {
           throw new Error("__UNROUTABLE__");
         }
       }
 
-      if (engineMode === "server" || (engineMode === "hybrid" && !usedClientEngine)) {
-        const res = await fetch("/api/safe-route", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            origin: { latitude: originLat, longitude: originLng },
-            destination: { latitude: destLat, longitude: destLng },
-            incident_points: routingIncidents,
-            mapbox_profile: "walking",
-            heat_penalty: 14,
-            grid_resolution_meters: 120,
-            padding_meters: 320,
-          }),
-          signal:
-            typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-              ? AbortSignal.timeout(55_000)
-              : undefined,
-        });
-
+      if (engineMode === "server" || engineMode === "hybrid") {
         let data: SafeRouteResponse & {
+          error_code?: string;
           detail?: unknown;
           hint?: string;
           attemptedUrl?: string;
           steps?: string[];
         };
         try {
-          data = (await res.json()) as typeof data;
-        } catch {
-          throw new Error("__UNROUTABLE__");
-        }
+          const res = await fetch("/api/safe-route", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              origin: { latitude: originLat, longitude: originLng },
+              destination: { latitude: destLat, longitude: destLng },
+              incident_points: routingIncidents,
+              mapbox_profile: "walking",
+              heat_penalty: 14,
+              grid_resolution_meters: 120,
+              padding_meters: 320,
+            }),
+            signal:
+              typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+                ? AbortSignal.timeout(55_000)
+                : undefined,
+          });
 
-        if (!res.ok) {
-          if (res.status === 404) {
+          try {
+            data = (await res.json()) as typeof data;
+          } catch {
             throw new Error("__UNROUTABLE__");
           }
-          const d = data.detail;
-          let msg =
-            typeof d === "string"
-              ? d
-              : Array.isArray(d)
-                ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
-                : "Route request failed";
-          const extra: string[] = [];
-          if (typeof data.hint === "string") extra.push(data.hint);
-          if (typeof data.attemptedUrl === "string") extra.push(`URL: ${data.attemptedUrl}`);
-          if (Array.isArray(data.steps)) extra.push(...data.steps);
-          if (extra.length) msg = [msg, ...extra].join(" ");
-          throw new Error(msg.trim() || "Route request failed");
+
+          if (!res.ok) {
+            // Backend unreachable — if we already have a client-computed path, keep it silently
+            if (res.status === 503 && data.error_code === "BACKEND_UNAVAILABLE") {
+              if (clientPathComputed) {
+                setRouteInfo("Showing grid-based route — Python routing service is offline.");
+                return;
+              }
+              throw new Error("__BACKEND_UNAVAILABLE__");
+            }
+            if (res.status === 404) {
+              throw new Error("__UNROUTABLE__");
+            }
+            const d = data.detail;
+            let msg =
+              typeof d === "string"
+                ? d
+                : Array.isArray(d)
+                  ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
+                  : "Route request failed";
+            const extra: string[] = [];
+            if (typeof data.hint === "string") extra.push(data.hint);
+            if (extra.length) msg = [msg, ...extra].join(" ");
+            throw new Error(msg.trim() || "Route request failed");
+          }
+          const line = responseToLineFeature(data);
+          setSafeRouteData(line.geometry.coordinates as [number, number][]);
+        } catch (serverErr) {
+          // In hybrid mode: if client path is already shown, absorb server errors gracefully
+          if (engineMode === "hybrid" && clientPathComputed) {
+            if (serverErr instanceof Error && serverErr.name === "AbortError") {
+              setRouteInfo("Showing grid-based route — routing service timed out.");
+            } else if (
+              serverErr instanceof Error &&
+              (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
+                serverErr.message.includes("ECONNREFUSED"))
+            ) {
+              setRouteInfo("Showing grid-based route — Python routing service is offline.");
+            } else {
+              setRouteInfo("Showing grid-based route — server upgrade unavailable.");
+            }
+            return;
+          }
+          throw serverErr;
         }
-        const line = responseToLineFeature(data);
-        setSafeRouteData(line.geometry.coordinates as [number, number][]);
       }
     } catch (e) {
       setSafeRouteData(null);
@@ -581,9 +608,11 @@ export default function Dashboard() {
         (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
         (e instanceof Error && e.name === "AbortError");
       if (aborted) {
-        setRouteError(
-          "Route request timed out (55s). Try again, set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client for instant local routing, or check the Python router logs (OSM download can be slow)."
-        );
+        setRouteError("Route request timed out. Try again or check your connection.");
+        return;
+      }
+      if (e instanceof Error && e.message === "__BACKEND_UNAVAILABLE__") {
+        setRouteError("Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.");
         return;
       }
       const raw = e instanceof Error ? e.message : "";
