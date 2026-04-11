@@ -1203,6 +1203,9 @@ export default function Dashboard() {
         name: "SOS — live location",
         coordinates: [longitude, latitude],
       };
+      // Close the directions planner if open so ContextualDirectionsCards renders
+      setDirectionsMode(false);
+      setRouteStartCustom(null);
       setSelectedDestination(dest);
       setFlyTarget({ latitude, longitude, zoom: 16 });
       void requestContextualSafeRoute(dest);

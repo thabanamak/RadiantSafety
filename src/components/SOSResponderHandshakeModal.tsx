@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Siren, MapPin, Navigation, CheckCircle, Loader2 } from "lucide-react";
+import { X, Siren, MapPin, CheckCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
 import type { SOSIssueType } from "@/components/SOSIssueSheet";
@@ -12,7 +12,6 @@ interface SOSResponderHandshakeModalProps {
   onClose: () => void;
   authUserId: string | undefined;
   onAccept: (alertId: string) => Promise<boolean>;
-  onRequestDirections: (lat: number, lng: number) => void;
   onMarkResolved: (alertId: string) => void;
   accepting: boolean;
   acceptError: string;
@@ -24,7 +23,6 @@ export default function SOSResponderHandshakeModal({
   onClose,
   authUserId,
   onAccept,
-  onRequestDirections,
   onMarkResolved,
   accepting,
   acceptError,
@@ -108,31 +106,17 @@ export default function SOSResponderHandshakeModal({
           )}
 
           {status === "accepted" && isAssignee && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  onRequestDirections(alert.location_lat, alert.location_lng);
-                  onClose();
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/15 py-3 text-sm font-bold text-cyan-200 transition-colors hover:bg-cyan-500/25"
-              >
-                <Navigation className="h-4 w-4" />
-                GET DIRECTIONS
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onMarkResolved(alert.id);
-                  onClose();
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-green-500/40 bg-green-500/10 py-2.5 text-xs font-semibold text-green-300 transition-colors hover:bg-green-500/20"
-              >
-                <CheckCircle className="h-4 w-4" />
-                MARK AS RESOLVED
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => {
+                onMarkResolved(alert.id);
+                onClose();
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-green-500/40 bg-green-500/10 py-2.5 text-xs font-semibold text-green-300 transition-colors hover:bg-green-500/20"
+            >
+              <CheckCircle className="h-4 w-4" />
+              MARK AS RESOLVED
+            </button>
           )}
         </div>
       </div>

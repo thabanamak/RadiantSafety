@@ -339,7 +339,6 @@ export default function SOSController({
         }}
         authUserId={authUser?.id}
         onAccept={handleResponderAccept}
-        onRequestDirections={(lat, lng) => onRequestRouteToSosLocation?.(lat, lng)}
         onMarkResolved={(id) => {
           setResponderModalAlert(null);
           setAcceptError("");
