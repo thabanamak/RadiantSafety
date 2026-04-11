@@ -1,6 +1,15 @@
 import { astarSafeRoute, incidentToHeatSource, type AStarOptions } from "@/lib/astar-engine";
 import type { SafeRouteIncident } from "@/lib/safe-route";
 
+export interface ClientSafeRouteResult {
+  path: [number, number][];
+  /** True if any segment of the path passes through a non-zero heat zone.
+   *  Frontend uses this to trigger a Safe Walk / Active Monitoring prompt. */
+  entersHazardZone: boolean;
+  /** Per-point heat along `path` (for street-snap apex / corridor choice). */
+  pathHeats: number[];
+}
+
 /**
  * Run the browser-side A* grid engine (see `astar-engine.ts`).
  *
@@ -19,17 +28,17 @@ export function computeClientSafeRoute(
   destination: { latitude: number; longitude: number },
   incidents: SafeRouteIncident[] | undefined,
   options?: AStarOptions,
-): [number, number][] | null {
+): ClientSafeRouteResult | null {
   const start: [number, number] = [origin.longitude, origin.latitude];
   const end: [number, number] = [destination.longitude, destination.latitude];
   const heat = (incidents ?? []).map(incidentToHeatSource);
   const res = astarSafeRoute(start, end, heat, [], {
-    heatPenalty: 14,
-    resolutionM: 80,
+    heatPenalty: 40,
+    resolutionM: 60,
     ...options,
   });
   if (!res || res.path.length < 2) return null;
-  return res.path;
+  return { path: res.path, entersHazardZone: res.entersHazardZone, pathHeats: res.pathHeats };
 }
 
 export type SafeRouteEngineMode = "server" | "client" | "hybrid";

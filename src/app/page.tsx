@@ -922,27 +922,34 @@ export default function Dashboard() {
       const engineMode = readSafeRouteEngineMode();
       let clientPathComputed = false;
       let clientPath: [number, number][] | null = null;
+      let clientPathHeats: number[] | undefined;
+      let clientEntersHazard = false;
       let snapPromise: Promise<[number, number][] | null> | null = null;
 
       if (engineMode === "client" || engineMode === "hybrid") {
         try {
-          clientPath = computeClientSafeRoute(
+          const clientResult = computeClientSafeRoute(
             { latitude: originLat, longitude: originLng },
             { latitude: destLat, longitude: destLng },
             routingIncidents,
           );
-          console.log("[SafeRoute] client A* result:", clientPath ? `${clientPath.length} points` : "null");
+          if (clientResult) {
+            clientPath = clientResult.path;
+            clientPathHeats = clientResult.pathHeats;
+            clientEntersHazard = clientResult.entersHazardZone;
+          }
+          console.log("[SafeRoute] client A* result:", clientPath ? `${clientPath.length} points` : "null", "hazard:", clientEntersHazard);
         } catch (astarErr) {
           console.warn("[SafeRoute] client A* threw:", astarErr);
           if (engineMode === "client") throw new Error("__UNROUTABLE__");
-          // hybrid: fall through to server
         }
         if (clientPath) {
           clientPathComputed = true;
-          snapPromise = snapRouteToStreets(clientPath);
+          snapPromise = snapRouteToStreets(clientPath, clientPathHeats);
           if (engineMode === "client") {
             const snapped = await snapPromise;
             setSafeRouteData(snapped ?? clientPath);
+            if (clientEntersHazard) setShowSafeWalk(true);
             return;
           }
         } else if (engineMode === "client") {
@@ -967,8 +974,8 @@ export default function Dashboard() {
               destination: { latitude: destLat, longitude: destLng },
               incident_points: routingIncidents,
               mapbox_profile: "walking",
-              heat_penalty: 14,
-              grid_resolution_meters: 120,
+              heat_penalty: 40,
+              grid_resolution_meters: 60,
               padding_meters: 320,
             }),
             signal:
@@ -1019,6 +1026,7 @@ export default function Dashboard() {
             throw new Error("__UNROUTABLE__");
           }
           setSafeRouteData(serverCoords as [number, number][]);
+          if (clientEntersHazard) setShowSafeWalk(true);
         } catch (serverErr) {
           console.warn("[SafeRoute] server error:", serverErr);
           if (engineMode === "hybrid" && clientPathComputed) {

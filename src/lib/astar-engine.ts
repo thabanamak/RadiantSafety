@@ -85,6 +85,11 @@ export interface AStarResult {
   peakHeat: number;
   /** Effective grid dimensions that were used. */
   gridSize: { rows: number; cols: number };
+  /** True if any point on the final path has non-zero heat.
+   *  Frontend uses this to trigger a Safe Walk / Active Monitoring modal. */
+  entersHazardZone: boolean;
+  /** Heat [0, 1] at each grid cell along `path` (same order/length as `path`). */
+  pathHeats: number[];
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -245,7 +250,7 @@ function filterSources(
 ): HeatSource[] {
   if (sources.length === 0) return [];
   const odM = haversineM(oLat, oLon, dLat, dLon);
-  const cutoff = Math.max(3500, 1.35 * odM);
+  const cutoff = Math.max(4500, 1.8 * odM);
   const midLat = (oLat + dLat) * 0.5;
   const midLon = (oLon + dLon) * 0.5;
 
@@ -463,8 +468,8 @@ export function astarSafeRoute(
   const {
     resolutionM = 80,
     heatPenalty = 14,
-    maxCells = 12_000,
-    bboxMarginFrac = 0.2,
+    maxCells = 16_000,
+    bboxMarginFrac = 0.6,
   } = opts;
 
   const [sLon, sLat] = start; // Mapbox convention: [lng, lat]
@@ -502,11 +507,27 @@ export function astarSafeRoute(
   // Pre-compute target lat/lon for the heuristic
   const [goalLat, goalLon] = toLatLon(gi, gj, g);
 
+  // ── 4b. Destination exception ─────────────────────────────────────────
+  // Only the last ~80 m approaching the goal get a modest heat reduction
+  // (max 55 %). This lets the path reach a goal inside a hotspot without
+  // carving a free tunnel through the entire danger zone.
+  const DEST_EXCEPTION_RADIUS_M = 80;
+  const DEST_MAX_DECAY = 0.55;
+  const destExceptionGrid = new Float32Array(totalCells);
+  for (let i = 0; i < g.rows; i++) {
+    const base = i * g.cols;
+    const lat = g.minLat + i * g.dLat;
+    for (let j = 0; j < g.cols; j++) {
+      const lon = g.minLon + j * g.dLon;
+      const d = haversineM(lat, lon, goalLat, goalLon);
+      if (d < DEST_EXCEPTION_RADIUS_M) {
+        destExceptionGrid[base + j] = DEST_MAX_DECAY * (1.0 - d / DEST_EXCEPTION_RADIUS_M);
+      }
+    }
+  }
+
   // ── 5. A* search ──────────────────────────────────────────────────────
 
-  // g-scores: Infinity means unvisited; Float32 is 2× smaller than Float64,
-  // cutting memory on big grids.  Precision loss is acceptable (we only
-  // compare relative order of metres-scale costs).
   const gScore = new Float32Array(totalCells).fill(Infinity);
   const cameFrom = new Int32Array(totalCells).fill(-1);
   const heap = new MinHeap();
@@ -516,20 +537,15 @@ export function astarSafeRoute(
   const startH = haversineM(...toLatLon(si, sj, g), goalLat, goalLon);
   heap.push(startH, startFlat);
 
-  // Pre-compute base step distances for cardinal and diagonal moves.
-  // Within a grid of uniform cell size, all cardinal steps are roughly the
-  // same length and all diagonal steps are √2× that.  Pre-computing avoids
-  // calling haversine for every edge expansion (the dominant cost).
   const cardinalStepM = g.effectiveResM;
   const diagonalStepM = g.effectiveResM * SQRT2;
 
   while (heap.size > 0) {
     const [, curFlat] = heap.pop();
 
-    if (curFlat === goalFlat) break; // found target
+    if (curFlat === goalFlat) break;
 
     const curG = gScore[curFlat];
-    // Stale entry (we found a shorter path to this node already)
     if (curG === Infinity) continue;
 
     const ci = (curFlat / g.cols) | 0;
@@ -545,10 +561,30 @@ export function astarSafeRoute(
       const nFlat = ni * g.cols + nj;
       if (blocked[nFlat]) continue;
 
-      // Edge cost = physical distance × safety multiplier
       const stepM = distMul === 1 ? cardinalStepM : diagonalStepM;
-      const meanHeat = 0.5 * (curHeat + heat[nFlat]);
-      const cost = stepM * (1 + heatPenalty * meanHeat);
+      const rawMeanHeat = 0.5 * (curHeat + heat[nFlat]);
+
+      // Destination exception: decay the perceived heat inside the
+      // 200 m bubble so the path can converge to an in-hotspot goal.
+      const destDecay = destExceptionGrid[nFlat];
+      const meanHeat = rawMeanHeat * (1 - destDecay);
+
+      // Cost tiers — treat ANY heat as dangerous:
+      //   heat < 0.04 → cold zone — no penalty (near-zero / grey)
+      //   0.04–0.25   → fringe — exponential ramp (push into grey)
+      //   0.25–0.5    → warm — steeper exponential
+      //   ≥ 0.5       → hot core — near-impassable wall (×1000)
+      let safetyMul: number;
+      if (meanHeat < 0.04) {
+        safetyMul = 1;
+      } else if (meanHeat < 0.20) {
+        safetyMul = Math.exp(heatPenalty * meanHeat * 2);
+      } else if (meanHeat < 0.45) {
+        safetyMul = Math.exp(heatPenalty * meanHeat * 3);
+      } else {
+        safetyMul = 5000;
+      }
+      const cost = stepM * safetyMul;
 
       const tentG = curG + cost;
       if (tentG >= gScore[nFlat]) continue;
@@ -556,7 +592,6 @@ export function astarSafeRoute(
       gScore[nFlat] = tentG;
       cameFrom[nFlat] = curFlat;
 
-      // Heuristic: haversine to goal (admissible — always ≤ true cost)
       const [nLat, nLon] = toLatLon(ni, nj, g);
       const h = haversineM(nLat, nLon, goalLat, goalLon);
       heap.push(tentG + h, nFlat);
@@ -576,11 +611,13 @@ export function astarSafeRoute(
 
   // Convert to Mapbox [lng, lat] and compute metrics
   const path: [number, number][] = [];
+  const pathHeats: number[] = [];
   let distanceM = 0;
   let heatSum = 0;
   let peakHeat = 0;
   let prevLat = 0;
   let prevLon = 0;
+  let entersHazardZone = false;
 
   for (let k = 0; k < pathFlat.length; k++) {
     const flat = pathFlat[k];
@@ -590,8 +627,10 @@ export function astarSafeRoute(
     path.push([lon, lat]); // Mapbox: [lng, lat]
 
     const h = heat[flat];
+    pathHeats.push(h);
     heatSum += h;
     if (h > peakHeat) peakHeat = h;
+    if (h > 0.05) entersHazardZone = true;
 
     if (k > 0) {
       distanceM += haversineM(prevLat, prevLon, lat, lon);
@@ -607,6 +646,8 @@ export function astarSafeRoute(
     meanHeat: pathFlat.length > 0 ? heatSum / pathFlat.length : 0,
     peakHeat,
     gridSize: { rows: g.rows, cols: g.cols },
+    entersHazardZone,
+    pathHeats,
   };
 }
 
