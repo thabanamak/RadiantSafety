@@ -119,7 +119,16 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
     if (inRoom && roomCode) fetchMembers(roomCode);
   }, [inRoom, roomCode, fetchMembers]);
 
-  // Realtime subscription — watch the whole room
+  // Polling fallback — re-fetch the full member list every 10 s while in a room.
+  // This guarantees the friends list stays current even when the Realtime filtered
+  // subscription misses events (e.g. RLS policy not set up for postgres_changes).
+  useEffect(() => {
+    if (!inRoom || !roomCode) return;
+    const id = setInterval(() => fetchMembers(roomCode), 10_000);
+    return () => clearInterval(id);
+  }, [inRoom, roomCode, fetchMembers]);
+
+  // Realtime subscription — provides instant updates on top of the polling fallback
   useEffect(() => {
     if (!inRoom || !roomCode) return;
 
