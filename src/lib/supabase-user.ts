@@ -1,26 +1,32 @@
-/**
- * Display name from Supabase Auth `user_metadata` (OAuth / email signup).
- */
+import type { User } from "@supabase/supabase-js";
+import type { AuthUser } from "@/lib/auth-storage";
+import { DEFAULT_REPUTATION_SCORE } from "@/lib/auth-storage";
+
 export function displayNameFromMetadata(
-  metadata: Record<string, unknown> | undefined,
-  emailFallback: string
+  meta: Record<string, unknown> | undefined,
+  email: string
 ): string {
-  if (!metadata || typeof metadata !== "object") {
-    return emailFallback.split("@")[0] || "User";
-  }
-  const full =
-    typeof metadata.full_name === "string"
-      ? metadata.full_name.trim()
-      : typeof metadata.name === "string"
-        ? metadata.name.trim()
-        : "";
-  if (full) return full;
-  const user =
-    typeof metadata.user_name === "string"
-      ? metadata.user_name.trim()
-      : typeof metadata.preferred_username === "string"
-        ? metadata.preferred_username.trim()
-        : "";
-  if (user) return user;
-  return emailFallback.split("@")[0] || "User";
+  const full = meta?.full_name;
+  const display = meta?.display_name;
+  if (typeof full === "string" && full.trim()) return full.trim();
+  if (typeof display === "string" && display.trim()) return display.trim();
+  return email.split("@")[0] || "User";
+}
+
+export function isEmailConfirmed(user: User | null | undefined): boolean {
+  return Boolean(user?.email_confirmed_at);
+}
+
+/** Fallback only — prefer `syncProfileFromAuthUser` so name/reputation come from `profiles`. */
+export function supabaseUserToAuthUser(user: User): AuthUser {
+  const email = user.email ?? "";
+  return {
+    id: user.id,
+    name: displayNameFromMetadata(
+      user.user_metadata as Record<string, unknown> | undefined,
+      email
+    ),
+    email,
+    reputationScore: DEFAULT_REPUTATION_SCORE,
+  };
 }

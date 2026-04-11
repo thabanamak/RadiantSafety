@@ -3,15 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Map, { Layer, Marker, Popup, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
+import { cn } from "@/lib/cn";
 import {
   toGeoJSON,
   userReports,
   userReportToMapPoint,
   MELBOURNE_CENTER,
 } from "@/lib/mock-data";
+import type { SafeRouteLineFeature } from "@/lib/safe-route";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
+import { MedicalCrossIcon } from "@/components/icons/MedicalCrossIcon";
+import { VicPoliceMapIcon } from "@/components/icons/VicPoliceMapIcon";
+import { zoomScaledMarkerDiameterPx } from "@/lib/map-marker-zoom";
+import type { PoliceStation } from "@/lib/vic-police-stations";
+import type { HealthFacility } from "@/lib/vic-health-facilities";
 
 export interface FriendLocation {
   id: string;
@@ -71,21 +78,6 @@ const heatmapLayer: LayerProps = {
   },
 };
 
-/** Avoid controlled-map feedback loops: Mapbox can re-emit move with tiny float drift. */
-function viewStateMeaningfullyChanged(
-  a: { latitude: number; longitude: number; zoom: number; bearing: number; pitch: number },
-  b: typeof a
-): boolean {
-  const eps = 1e-7;
-  return (
-    Math.abs(a.latitude - b.latitude) > eps ||
-    Math.abs(a.longitude - b.longitude) > eps ||
-    Math.abs(a.zoom - b.zoom) > 1e-5 ||
-    Math.abs(a.bearing - b.bearing) > 1e-4 ||
-    Math.abs(a.pitch - b.pitch) > 1e-4
-  );
-}
-
 function mapCenterMeaningfullyChanged(
   a: { latitude: number; longitude: number; zoom: number },
   b: { latitude: number; longitude: number; zoom: number }
@@ -117,6 +109,36 @@ const pointsLayer: LayerProps = {
   },
 };
 
+const safeRouteLayer: LayerProps = {
+  id: "safe-route-line",
+  type: "line",
+  source: "safe-route",
+  layout: {
+    "line-join": "round",
+    "line-cap": "round",
+  },
+  paint: {
+    "line-color": "#22d3ee",
+    "line-width": 5,
+    "line-opacity": 0.92,
+  },
+};
+
+const contextualSafeRouteLayer: LayerProps = {
+  id: "contextual-safe-route-line",
+  type: "line",
+  source: "contextual-safe-route",
+  layout: {
+    "line-join": "round",
+    "line-cap": "round",
+  },
+  paint: {
+    "line-color": "#00BFFF",
+    "line-width": 5,
+    "line-opacity": 0.95,
+  },
+};
+
 export type DroppedPin = {
   latitude: number;
   longitude: number;
@@ -143,6 +165,18 @@ interface RadiantMapProps {
   friendLocations?: FriendLocation[];
   /** Active route geometry from Directions feature — rendered as a blue polyline */
   activeRoute?: { geometry: GeoJSON.LineString } | null;
+  /** Heat-aware backend route (cyan line) — legacy panel flow */
+  safeRouteLine?: SafeRouteLineFeature | null;
+  /** Search-driven destination marker (Mapbox Marker) */
+  contextualDestination?: { name: string; lng: number; lat: number } | null;
+  /** Directions planner — custom start (when not using current location) */
+  contextualOrigin?: { name: string; lng: number; lat: number } | null;
+  /** GeoJSON LineString coordinates [lng, lat][] — contextual safe route, drawn above heatmap */
+  contextualRouteCoordinates?: [number, number][] | null;
+  /** Victoria Police stations — blue circular markers */
+  policeStations?: PoliceStation[];
+  /** Hospitals & medical centres — white circle + red cross; size follows zoom */
+  healthFacilities?: HealthFacility[];
 }
 
 export default function RadiantMap({
@@ -157,6 +191,12 @@ export default function RadiantMap({
   sosAlerts = [],
   friendLocations = [],
   activeRoute,
+  safeRouteLine,
+  contextualDestination,
+  contextualOrigin,
+  contextualRouteCoordinates,
+  policeStations = [],
+  healthFacilities = [],
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const lastReportedCenterRef = useRef<{
@@ -164,13 +204,14 @@ export default function RadiantMap({
     longitude: number;
     zoom: number;
   } | null>(null);
-  const [viewState, setViewState] = useState({
+  /** Uncontrolled viewport — do not mirror Mapbox viewState in React (avoids move/setState feedback loops). */
+  const initialViewState = useRef({
     latitude: MELBOURNE_CENTER.latitude as number,
     longitude: MELBOURNE_CENTER.longitude as number,
     zoom: MELBOURNE_CENTER.zoom as number,
     bearing: 0,
     pitch: 30,
-  });
+  }).current;
 
   // Animate the dropped pin — cycle through colours as it "melts" in
   const [pinPhase, setPinPhase] = useState<0 | 1 | 2 | 3>(0);
@@ -205,6 +246,9 @@ export default function RadiantMap({
     trustPoints: number | null;
   } | null>(null);
 
+  /** Current zoom for police / medical marker sizing (updated on map move). */
+  const [mapZoom, setMapZoom] = useState<number>(initialViewState.zoom);
+
   useEffect(() => {
     if (!onFlyTo || !mapRef.current) return;
     mapRef.current.flyTo({
@@ -231,25 +275,44 @@ export default function RadiantMap({
   // Intentionally DO NOT fly-to on droppedPin.
   // The UX should feel like the pin melts into the map rather than the camera snapping/zooming.
 
+  useEffect(() => {
+    if (!safeRouteLine || !mapRef.current) return;
+    const coords = safeRouteLine.geometry.coordinates;
+    if (coords.length < 2) return;
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    mapRef.current.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: { top: 100, bottom: 160, left: 60, right: 60 }, duration: 1400, pitch: 40 }
+    );
+  }, [safeRouteLine]);
+
+  useEffect(() => {
+    const coords = contextualRouteCoordinates;
+    if (!coords?.length || coords.length < 2 || !mapRef.current) return;
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    mapRef.current.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: { top: 100, bottom: 200, left: 48, right: 48 }, duration: 1400, pitch: 40 }
+    );
+  }, [contextualRouteCoordinates]);
+
   const onMove = useCallback(
-    (evt: { viewState: typeof viewState }) => {
+    (evt: { viewState: { latitude: number; longitude: number; zoom: number } }) => {
+      setMapZoom(evt.viewState.zoom);
+      if (!onCenterChange) return;
       const vs = evt.viewState;
-      const next = {
+      const center = {
         latitude: vs.latitude,
         longitude: vs.longitude,
         zoom: vs.zoom,
-        bearing: vs.bearing,
-        pitch: vs.pitch,
-      };
-      setViewState((prev) =>
-        viewStateMeaningfullyChanged(prev, next) ? next : prev
-      );
-
-      if (!onCenterChange) return;
-      const center = {
-        latitude: next.latitude,
-        longitude: next.longitude,
-        zoom: next.zoom,
       };
       const last = lastReportedCenterRef.current;
       if (last && !mapCenterMeaningfullyChanged(last, center)) return;
@@ -309,7 +372,7 @@ export default function RadiantMap({
   return (
     <Map
       ref={mapRef}
-      {...viewState}
+      initialViewState={initialViewState}
       onMove={onMove}
       onClick={handleMapClick}
       interactiveLayerIds={["incidents-points"]}
@@ -324,6 +387,26 @@ export default function RadiantMap({
         <Layer {...heatmapLayer} />
         <Layer {...pointsLayer} />
       </Source>
+
+      {safeRouteLine && (
+        <Source id="safe-route" type="geojson" data={safeRouteLine}>
+          <Layer {...safeRouteLayer} />
+        </Source>
+      )}
+
+      {contextualRouteCoordinates && contextualRouteCoordinates.length >= 2 && (
+        <Source
+          id="contextual-safe-route"
+          type="geojson"
+          data={{
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: contextualRouteCoordinates },
+          }}
+        >
+          <Layer {...contextualSafeRouteLayer} />
+        </Source>
+      )}
 
       {reportPopup && (
         <Popup
@@ -405,6 +488,32 @@ export default function RadiantMap({
           </Marker>
         );
       })}
+
+      {/* Directions planner — custom start */}
+      {contextualOrigin && (
+        <Marker latitude={contextualOrigin.lat} longitude={contextualOrigin.lng} anchor="bottom">
+          <div className="flex flex-col items-center">
+            <div className="rounded-md border border-black/20 bg-teal-950/95 px-1.5 py-0.5 text-[10px] font-medium text-teal-100 shadow-md max-w-[200px] truncate">
+              {contextualOrigin.name}
+            </div>
+            <div className="h-0 w-0 border-x-[7px] border-x-transparent border-t-[9px] border-t-teal-900 drop-shadow-md" />
+            <div className="-mt-px h-3 w-3 rounded-full border-2 border-white bg-teal-500 shadow-lg ring-1 ring-black/30" />
+          </div>
+        </Marker>
+      )}
+
+      {/* Search-selected destination — standard pin */}
+      {contextualDestination && (
+        <Marker latitude={contextualDestination.lat} longitude={contextualDestination.lng} anchor="bottom">
+          <div className="flex flex-col items-center">
+            <div className="rounded-md border border-black/20 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-900 shadow-md max-w-[200px] truncate">
+              {contextualDestination.name}
+            </div>
+            <div className="h-0 w-0 border-x-[7px] border-x-transparent border-t-[9px] border-t-white drop-shadow-md" />
+            <div className="-mt-px h-3 w-3 rounded-full border-2 border-white bg-rose-500 shadow-lg ring-1 ring-black/30" />
+          </div>
+        </Marker>
+      )}
 
       {/* Manually dropped pin — animated colour-melt */}
       {droppedPin && (
@@ -491,6 +600,68 @@ export default function RadiantMap({
           </div>
         </Marker>
       ))}
+
+      {/* Police stations — dark blue discs, white badge; size tracks map zoom */}
+      {policeStations.map((ps) => {
+        const d = zoomScaledMarkerDiameterPx(mapZoom);
+        const iconPx = Math.max(7, Math.round(d * 0.48));
+        return (
+          <Marker
+            key={ps.id}
+            latitude={ps.latitude}
+            longitude={ps.longitude}
+            anchor="center"
+          >
+            <div
+              className="flex shrink-0 items-center justify-center rounded-full shadow-lg ring-2 ring-blue-950/70"
+              style={{
+                width: d,
+                height: d,
+                backgroundColor: "#00264d",
+                boxShadow: "0 2px 10px rgba(0, 18, 51, 0.55)",
+              }}
+              title={ps.name}
+              role="img"
+              aria-label={`Police station: ${ps.name}`}
+            >
+              <VicPoliceMapIcon sizePx={iconPx} />
+            </div>
+          </Marker>
+        );
+      })}
+
+      {/* Hospitals & medical centres — white disc + red cross; medical centres use a red ring */}
+      {healthFacilities.map((hf) => {
+        const d = zoomScaledMarkerDiameterPx(mapZoom);
+        const iconPx = Math.max(7, Math.round(d * 0.5));
+        const isHospital = hf.kind === "hospital";
+        return (
+          <Marker
+            key={hf.id}
+            latitude={hf.latitude}
+            longitude={hf.longitude}
+            anchor="center"
+          >
+            <div
+              className={cn(
+                "flex shrink-0 items-center justify-center rounded-full shadow-md",
+                isHospital ? "ring-2 ring-slate-400/60" : "ring-2 ring-red-500/70"
+              )}
+              style={{
+                width: d,
+                height: d,
+                backgroundColor: "#ffffff",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+              }}
+              title={hf.name}
+              role="img"
+              aria-label={`${isHospital ? "Hospital" : "Medical centre"}: ${hf.name}`}
+            >
+              <MedicalCrossIcon sizePx={iconPx} />
+            </div>
+          </Marker>
+        );
+      })}
     </Map>
   );
 }

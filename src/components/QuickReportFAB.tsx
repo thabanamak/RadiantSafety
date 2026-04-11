@@ -11,8 +11,10 @@ import {
   Siren,
   ImagePlus,
   Loader2,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
 import type { ReportCategory } from "@/lib/types";
 
 const CATEGORIES: ReportCategory[] = [
@@ -51,6 +53,12 @@ interface QuickReportFABProps {
   onReportSubmitted?: (report: SubmittedReportPayload) => void | Promise<void>;
   /** Called when the SOS button is tapped — opens the issue selection sheet */
   onSOSPress?: () => void;
+  /** Called when the Safe Walk button is tapped — starts the check-in timer */
+  onSafeWalkPress?: () => void;
+  /** Only signed-in, eligible accounts can open the incident report flow */
+  reportingAllowed?: boolean;
+  /** When user tries to report without permission — e.g. open login */
+  onRequireReportingAuth?: () => void;
 }
 
 export default function QuickReportFAB({
@@ -59,6 +67,9 @@ export default function QuickReportFAB({
   droppedPin,
   onReportSubmitted,
   onSOSPress,
+  onSafeWalkPress,
+  reportingAllowed = false,
+  onRequireReportingAuth,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -80,12 +91,8 @@ export default function QuickReportFAB({
   const [imagePickError, setImagePickError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * Last drop coords we synced to `pinnedLocation`. Cleared when `droppedPin` is null
-   * so a later report at the **same** map point still syncs (otherwise the effect would
-   * bail and the second submit would never persist correctly).
-   */
-  const lastSyncedDropKeyRef = useRef<string | null>(null);
+  /** Prevents re-running the drop sync when parent still holds the same coords and locMode stays "drop". */
+  const lastConsumedDropKeyRef = useRef<string | null>(null);
 
   const resetOptionalImage = useCallback(() => {
     setAttachedImageDataUrl(null);
@@ -129,13 +136,21 @@ export default function QuickReportFAB({
   // When the user places a pin on the map, sync coords, exit map drop mode, and reopen the panel on the location step.
   useEffect(() => {
     if (!droppedPin || locMode !== "drop") {
-      if (!droppedPin) lastSyncedDropKeyRef.current = null;
+      if (!droppedPin) lastConsumedDropKeyRef.current = null;
+      return;
+    }
+
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      lastConsumedDropKeyRef.current = null;
+      onPinLocation?.(null);
+      onDropPinMode?.(false);
       return;
     }
 
     const dropKey = `${droppedPin.latitude},${droppedPin.longitude}`;
-    if (lastSyncedDropKeyRef.current === dropKey) return;
-    lastSyncedDropKeyRef.current = dropKey;
+    if (lastConsumedDropKeyRef.current === dropKey) return;
+    lastConsumedDropKeyRef.current = dropKey;
 
     const pin: PinLocation = { ...droppedPin, mode: "dropped" };
     setPinnedLocation(pin);
@@ -144,33 +159,22 @@ export default function QuickReportFAB({
     onDropPinMode?.(false);
     setStep("location");
     setIsOpen(true);
-  }, [droppedPin, locMode, onPinLocation, onDropPinMode]);
+  }, [droppedPin, locMode, onPinLocation, onDropPinMode, reportingAllowed, onRequireReportingAuth]);
 
-  const handleGPS = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGpsError("Geolocation not supported on this device.");
-      return;
-    }
+  const handleGPS = useCallback(async () => {
     setGpsLoading(true);
     setGpsError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const pin: PinLocation = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          mode: "gps",
-        };
-        setPinnedLocation(pin);
-        onPinLocation?.(pin);
-        setLocMode("gps");
-        setGpsLoading(false);
-      },
-      (err) => {
-        setGpsError(err.message || "Could not get location.");
-        setGpsLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    try {
+      const { latitude, longitude } = await getCurrentPositionBestEffort();
+      const pin: PinLocation = { latitude, longitude, mode: "gps" };
+      setPinnedLocation(pin);
+      onPinLocation?.(pin);
+      setLocMode("gps");
+    } catch (err) {
+      setGpsError(explainGeoError(err as GeolocationPositionError));
+    } finally {
+      setGpsLoading(false);
+    }
   }, [onPinLocation]);
 
   const handleEmergencyPing = useCallback(() => {
@@ -181,17 +185,19 @@ export default function QuickReportFAB({
   }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
-    lastSyncedDropKeyRef.current = null;
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     setPinnedLocation(null);
     onPinLocation?.(null);
     setLocMode("drop");
     setDropPinActive(true);
     onDropPinMode?.(true);
     setIsOpen(false);
-  }, [onDropPinMode, onPinLocation]);
+  }, [onDropPinMode, onPinLocation, reportingAllowed, onRequireReportingAuth]);
 
   const handleClearPin = useCallback(() => {
-    lastSyncedDropKeyRef.current = null;
     setPinnedLocation(null);
     setLocMode("none");
     setDropPinActive(false);
@@ -200,8 +206,11 @@ export default function QuickReportFAB({
   }, [onPinLocation, onDropPinMode]);
 
   const handleSubmit = async () => {
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     if (!selected || !pinnedLocation) return;
-    lastSyncedDropKeyRef.current = null;
     setSubmitted(true);
     try {
       await onReportSubmitted?.({
@@ -212,7 +221,6 @@ export default function QuickReportFAB({
       });
     } finally {
       setTimeout(() => {
-        lastSyncedDropKeyRef.current = null;
         setIsOpen(false);
         setSubmitted(false);
         setSelected(null);
@@ -240,6 +248,24 @@ export default function QuickReportFAB({
       <div className="pointer-events-auto fixed bottom-6 right-6 z-50">
         {menuOpen && (
           <>
+            {/* Safe Walk — top (above incident report) */}
+            <div className="group absolute right-0 bottom-0 -translate-y-[144px]">
+              <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                  Safe Walk
+                  <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 border border-radiant-border border-t-0 border-l-0 bg-black/90" />
+                </div>
+              </div>
+              <button
+                onClick={() => { setMenuOpen(false); onSafeWalkPress?.(); }}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-green-500/40 bg-radiant-surface/95 shadow-lg backdrop-blur-xl transition-transform hover:scale-105 active:scale-95"
+                aria-label="Safe Walk timer"
+              >
+                <Shield className="h-5 w-5 text-green-400" />
+              </button>
+            </div>
+
+            {/* Incident Report */}
             <div className="group absolute right-0 bottom-0 -translate-y-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -249,6 +275,10 @@ export default function QuickReportFAB({
               </div>
               <button
                 onClick={() => {
+                  if (!reportingAllowed) {
+                    onRequireReportingAuth?.();
+                    return;
+                  }
                   setMenuOpen(false);
                   setIsOpen(true);
                 }}
@@ -259,6 +289,7 @@ export default function QuickReportFAB({
               </button>
             </div>
 
+            {/* SOS */}
             <div className="group absolute right-0 bottom-0 -translate-x-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">

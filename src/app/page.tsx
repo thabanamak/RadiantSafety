@@ -1,15 +1,57 @@
 "use client";
 
-import { useState, useCallback, useEffect, use, useRef } from "react";
-import RadiantMap, { type DroppedPin } from "@/components/RadiantMap";
+import dynamic from "next/dynamic";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { DroppedPin } from "@/components/RadiantMap";
+
+/** Mapbox / react-map-gl touch `window` — must not SSR or the whole page can white-screen. */
+const RadiantMap = dynamic(() => import("@/components/RadiantMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center bg-[#0a0a0a] text-sm text-gray-400">
+      Loading map…
+    </div>
+  ),
+});
 import TopNav from "@/components/TopNav";
-import type { AuthUser, IncidentTab } from "@/components/TopNav";
+import type { IncidentTab } from "@/components/TopNav";
 import QuickReportFAB, {
   type PinLocation,
   type SubmittedReportPayload,
 } from "@/components/QuickReportFAB";
-import AuthModal from "@/components/AuthModal";
+import ReporterProfileModal from "@/components/ReporterProfileModal";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isEmailLinkCallback } from "@/lib/auth-callback-url";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
+import type { AuthUser } from "@/lib/auth-storage";
+import {
+  clearStoredUser,
+  DEFAULT_REPUTATION_SCORE,
+  getStoredUser,
+  setStoredUser,
+} from "@/lib/auth-storage";
+import type { UserReputation } from "@/lib/types";
+import ContextualDirectionsCards from "@/components/ContextualDirectionsCards";
+import type { SelectedDestination } from "@/components/ContextualDirectionsCards";
+import RoutePlannerPanel from "@/components/RoutePlannerPanel";
+import RouteToast from "@/components/RouteToast";
+import {
+  isWithinSafenetCoverage,
+  SAFENET_COVERAGE_ERROR,
+  SAFENET_UNROUTABLE_ERROR,
+} from "@/lib/safenet-bbox";
 import { currentUser } from "@/lib/mock-data";
+import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
+import {
+  capIncidents,
+  responseToLineFeature,
+  type SafeRouteIncident,
+  type SafeRouteResponse,
+} from "@/lib/safe-route";
+import { computeClientSafeRoute, readSafeRouteEngineMode } from "@/lib/client-safe-route";
+import { snapRouteToStreets } from "@/lib/street-snap";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import { getSeverityForCategory } from "@/lib/category-severity";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
@@ -18,18 +60,18 @@ import AreaIncidentSummary from "@/components/AreaIncidentSummary";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
 import type { FriendLocation } from "@/components/RadiantMap";
 import SOSController from "@/features/sos/SOSController";
+import IncomingSOSBanner, { type IncomingSOS } from "@/components/IncomingSOSBanner";
+import SafeWalkTimer from "@/components/SafeWalkTimer";
+import HotspotNudge from "@/components/HotspotNudge";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
+import { VIC_HEALTH_FACILITIES } from "@/lib/vic-health-facilities";
+import { VIC_POLICE_STATIONS } from "@/lib/vic-police-stations";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
-import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
+import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { getSupabaseBrowser } from "@/lib/supabase-browser";
-import {
-  fetchUserReports,
-  insertUserReport,
-  mergeUserReports,
-} from "@/lib/supabase-user-reports";
+import { insertUserReport } from "@/lib/supabase-user-reports";
 
 interface VicPolIncident {
   id: string;
@@ -54,16 +96,58 @@ interface SupabaseIncident {
   is_verified: boolean;
 }
 
-type ModalState = "closed" | "login" | "signup";
+function reputationForAuthUser(user: AuthUser): UserReputation {
+  const score = user.reputationScore ?? DEFAULT_REPUTATION_SCORE;
+  return {
+    score,
+    label: score >= 70 ? "Trusted" : "Community",
+    isTrusted: score >= 70,
+  };
+}
 
-type DashboardProps = {
-  params: Promise<Record<string, string | string[] | undefined>>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
+function WelcomeBanner({ authUser }: { authUser: AuthUser | null }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const showWelcome = searchParams.get("welcome") === "1";
+  const visible = showWelcome && authUser !== null;
 
-export default function Dashboard({ params, searchParams }: DashboardProps) {
-  use(params);
-  use(searchParams);
+  useEffect(() => {
+    if (!visible) return;
+    const timer = window.setTimeout(() => {
+      router.replace("/", { scroll: false });
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [visible, router]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="pointer-events-auto absolute left-1/2 top-[72px] z-40 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl border border-emerald-500/35 bg-emerald-950/90 px-4 py-3 shadow-xl backdrop-blur-sm">
+      <div className="flex items-start gap-3">
+        <p className="flex-1 text-center text-sm leading-relaxed text-emerald-50 sm:text-left">
+          <span className="font-semibold text-white">
+            Welcome{authUser.name ? `, ${authUser.name}` : ""}!
+          </span>{" "}
+          You&apos;re signed in — your reputation starts at{" "}
+          {authUser.reputationScore ?? DEFAULT_REPUTATION_SCORE}. Explore the Pulse
+          and map to get started.
+        </p>
+        <button
+          type="button"
+          onClick={() => router.replace("/", { scroll: false })}
+          className="shrink-0 rounded-lg p-1 text-emerald-200/80 transition-colors hover:bg-emerald-900/50 hover:text-white"
+          aria-label="Dismiss"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
     longitude: number;
@@ -74,20 +158,23 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
 
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [modalState, setModalState] = useState<ModalState>("closed");
+  const [reporterProfile, setReporterProfile] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
+  const canSubmitReports = Boolean(
+    authUser?.id && authUser.over18Verified !== false
+  );
 
   const [vicpolLoaded, setVicpolLoaded] = useState(false);
   const [vicpolLoading, setVicpolLoading] = useState(false);
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
 
   const [supabaseItems, setSupabaseItems] = useState<SupabaseIncident[]>([]);
-  const [vicpolFetchReady, setVicpolFetchReady] = useState(false);
-  const [supabaseFetchReady, setSupabaseFetchReady] = useState(false);
 
-  /** User-reported incidents: loaded from `user_reports` + any new submissions this session. */
+  /** In-session user submissions (Quick Report); shown under User Reported + search. */
   const [submittedUserReports, setSubmittedUserReports] = useState<UserReport[]>([]);
-  const hasSyncedOfficialToUserReports = useRef(false);
 
   // Location pin state — shared between FAB and map
   const [dropPinMode, setDropPinMode] = useState(false);
@@ -114,7 +201,41 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   // SOS — sheet open state is owned here so the FAB can trigger it;
   // all other SOS logic lives in SOSController
   const [showSOSSheet, setShowSOSSheet] = useState(false);
+  const [showSafeWalk, setShowSafeWalk] = useState(false);
+  const [showHotspotNudge, setShowHotspotNudge] = useState(false);
+  const nudgeDismissedUntil = useRef<number>(0);
   const [sosMapAlerts, setSosMapAlerts] = useState<SOSAlert[]>([]);
+  // Incoming SOS banner — fires when any device inserts into active_sos via Realtime
+  const [incomingSOS, setIncomingSOS] = useState<IncomingSOS | null>(null);
+
+  useEffect(() => {
+    const { client } = getSupabaseBrowserClient();
+    if (!client) return;
+    const channel = client
+      .channel("public:active_sos")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "active_sos" },
+        (payload) => {
+          const row = payload.new as {
+            user_id: string;
+            lng: number;
+            lat: number;
+            created_at: string;
+          };
+          setIncomingSOS({
+            friendName: "User " + row.user_id.substring(0, 4),
+            coordinates: [row.lng, row.lat],
+            time: new Date(row.created_at).toLocaleTimeString(),
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, []);
 
   // Find My — friend locations for the map; populated by FindMyController
   const [friendLocations, setFriendLocations] = useState<FriendLocation[]>([]);
@@ -122,23 +243,126 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   // Directions — active route for the map; populated by DirectionsController
   const [activeRoute, setActiveRoute] = useState<{ geometry: GeoJSON.LineString } | null>(null);
 
+  const [selectedDestination, setSelectedDestination] = useState<SelectedDestination | null>(null);
+  const [safeRouteData, setSafeRouteData] = useState<[number, number][] | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeLoadingPhase, setRouteLoadingPhase] = useState<"location" | "route" | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeInfo, setRouteInfo] = useState<string | null>(null);
+  const [directionsMode, setDirectionsMode] = useState(false);
+  const [routeStartCustom, setRouteStartCustom] = useState<SelectedDestination | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const dismissToast = useCallback(() => setToastMessage(null), []);
+
+  const [showPoliceOnMap, setShowPoliceOnMap] = useState(true);
+  const [showHealthFacilitiesOnMap, setShowHealthFacilitiesOnMap] = useState(true);
+
+  useEffect(() => {
+    if (pathname === "/") {
+      setAuthUser(getStoredUser());
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname !== "/") return;
+    let cancelled = false;
+    const { client, error } = getSupabaseBrowserClient();
+    if (error || !client) return;
+    const supabase = client;
+
+    async function applySession(session: Session | null) {
+      if (cancelled) return;
+      if (!session?.user) {
+        if (typeof window !== "undefined" && isEmailLinkCallback()) {
+          return;
+        }
+        if (getStoredUser()?.id) {
+          clearStoredUser();
+          setAuthUser(null);
+        }
+        return;
+      }
+      try {
+        const u = await syncProfileFromAuthUser(supabase, session.user);
+        if (cancelled) return;
+        setStoredUser(u);
+        setAuthUser(u);
+        if (
+          typeof window !== "undefined" &&
+          (isEmailLinkCallback() || window.location.hash.length > 1)
+        ) {
+          router.replace("/?welcome=1", { scroll: false });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    void supabase.auth.getSession().then((res: { data: { session: Session | null } }) => {
+      void applySession(res.data.session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        void applySession(session);
+      }
+    );
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [pathname, router]);
+
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
   }, []);
 
   const handleSelectArea = useCallback(
-    (coords: { latitude: number; longitude: number; zoom: number }) => {
-      setFlyTarget(coords);
+    (payload: {
+      latitude: number;
+      longitude: number;
+      zoom: number;
+      placeName: string;
+      center: [number, number];
+    }) => {
+      setFlyTarget({
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        zoom: payload.zoom,
+      });
+      setSelectedDestination({
+        name: payload.placeName,
+        coordinates: payload.center,
+      });
+      setSafeRouteData(null);
+      setRouteError(null);
+      setRouteInfo(null);
     },
     []
   );
 
-  const handleAuth = useCallback((user: AuthUser) => {
-    setAuthUser(user);
-  }, []);
-
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    const { client } = getSupabaseBrowserClient();
+    if (client) {
+      await client.auth.signOut();
+    }
+    clearStoredUser();
     setAuthUser(null);
+    router.replace("/", { scroll: false });
+  }, [router]);
+
+  const handleViewPastReports = useCallback(() => {
+    setActiveIncidentTab("user-reported");
+    setFlyTarget(null);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("user-reported-panel")
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, []);
 
   const loadVicPol = useCallback(async () => {
@@ -153,7 +377,6 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
       setVicpolItems([]);
     } finally {
       setVicpolLoading(false);
-      setVicpolFetchReady(true);
     }
   }, [vicpolLoading, vicpolLoaded]);
 
@@ -164,8 +387,6 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
       setSupabaseItems(Array.isArray(data.items) ? data.items : []);
     } catch {
       setSupabaseItems([]);
-    } finally {
-      setSupabaseFetchReady(true);
     }
   }, []);
 
@@ -175,82 +396,6 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     loadSupabaseIncidents();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Hydrate user-reported incidents from `public.user_reports` (same rows as SQL seed / app inserts).
-  useEffect(() => {
-    let cancelled = false;
-    const client = getSupabaseBrowser();
-    if (!client) return;
-
-    void (async () => {
-      const fromDb = await fetchUserReports(client);
-      if (cancelled) return;
-      setSubmittedUserReports((prev) => mergeUserReports(fromDb, prev));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Append official VicPol + historical Supabase incidents into `user_reports` (deduped by source_key server-side).
-  useEffect(() => {
-    if (!vicpolFetchReady || !supabaseFetchReady) return;
-    if (hasSyncedOfficialToUserReports.current) return;
-    hasSyncedOfficialToUserReports.current = true;
-
-    void (async () => {
-      try {
-        const vicpol = vicpolItems
-          .filter((i) => i.latitude != null && i.longitude != null)
-          .map((i) => ({
-            id: i.id,
-            title: i.title,
-            latitude: i.latitude as number,
-            longitude: i.longitude as number,
-            intensity: i.intensity,
-          }));
-
-        const supabase = supabaseItems.map((i) => ({
-          id: i.id,
-          title: i.title,
-          location_lat: i.location_lat,
-          location_lng: i.location_lng,
-          intensity: i.intensity,
-        }));
-
-        const res = await fetch("/api/sync-active-incidents-to-user-reports", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vicpol, supabase }),
-        });
-        const data = (await res.json()) as {
-          ok?: boolean;
-          error?: string;
-          inserted?: number;
-          total?: number;
-          note?: string;
-        };
-        if (!data.ok) {
-          if (process.env.NODE_ENV === "development") {
-            console.warn(
-              "[RadiantSafety] sync-active-incidents-to-user-reports failed:",
-              data.error ?? `HTTP ${res.status}`,
-              data.note ? `(${data.note})` : ""
-            );
-          }
-          return;
-        }
-
-        const client = getSupabaseBrowser();
-        if (!client) return;
-        const fromDb = await fetchUserReports(client);
-        setSubmittedUserReports((prev) => mergeUserReports(fromDb, prev));
-      } catch {
-        /* sync is best-effort */
-      }
-    })();
-  }, [vicpolFetchReady, supabaseFetchReady, vicpolItems, supabaseItems]);
 
   const vicpolMapPoints: MapIncidentPoint[] = vicpolItems
     .filter((i) => i.latitude != null && i.longitude != null)
@@ -278,10 +423,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     }
     if (pin.mode === "gps") {
       setGpsPin({ latitude: pin.latitude, longitude: pin.longitude });
-      setDroppedPin(null);
     } else {
       setDroppedPin({ latitude: pin.latitude, longitude: pin.longitude });
-      setGpsPin(null);
     }
   }, []);
 
@@ -298,12 +441,20 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
 
   const handleReportSubmitted = useCallback(
     async (payload: SubmittedReportPayload) => {
+      if (!authUser?.id) {
+        router.push("/login");
+        return;
+      }
+      if (authUser.over18Verified === false) {
+        router.push("/signup");
+        return;
+      }
       let id =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `report-${Date.now()}`;
 
-      const client = getSupabaseBrowser();
+      const { client } = getSupabaseBrowserClient();
       if (client) {
         const result = await insertUserReport(client, {
           category: payload.category,
@@ -317,11 +468,13 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         } else {
           console.warn(
             "[RadiantSafety] user_reports insert skipped or failed:",
-            "error" in result ? result.error : "unknown"
+            "error" in result ? result.error : ""
           );
         }
       }
 
+      const rid = authUser.id ?? authUser.email;
+      const rname = authUser.name;
       const report: UserReport = {
         id,
         latitude: payload.location.latitude,
@@ -334,9 +487,11 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         upvotes: 0,
         downvotes: 0,
         createdAt: new Date(),
-        userId: authUser?.email ?? "anonymous",
+        userId: rid,
+        reporterId: rid,
+        reporterDisplayName: rname,
       };
-      setSubmittedUserReports((prev) => mergeUserReports([report], prev));
+      setSubmittedUserReports((prev) => [report, ...prev]);
       setActiveIncidentTab("user-reported");
       setFlyTarget({
         latitude: report.latitude,
@@ -344,8 +499,12 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         zoom: 16,
       });
     },
-    [authUser]
+    [authUser, router]
   );
+
+  const handleDeleteReport = useCallback((reportId: string) => {
+    setSubmittedUserReports((prev) => prev.filter((r) => r.id !== reportId));
+  }, []);
 
   const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
     id: r.id,
@@ -383,14 +542,367 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     );
   }, [userCoords]);
 
+  const routingIncidents: SafeRouteIncident[] = useMemo(() => {
+    const raw: SafeRouteIncident[] = [];
+    for (const v of vicpolItems) {
+      if (v.latitude == null || v.longitude == null) continue;
+      raw.push({
+        latitude: v.latitude,
+        longitude: v.longitude,
+        intensity: Math.min(10, Math.max(1, v.intensity)),
+        influence_meters: 220,
+      });
+    }
+    for (const s of supabaseItems) {
+      raw.push({
+        latitude: s.location_lat,
+        longitude: s.location_lng,
+        intensity: Math.min(10, Math.max(1, s.intensity)),
+        influence_meters: 220,
+      });
+    }
+    return capIncidents(raw);
+  }, [vicpolItems, supabaseItems]);
+
+  // Hotspot nudge — check if user has walked into a high-incident-density zone
+  useEffect(() => {
+    if (!userCoords || showSafeWalk) return;
+    if (Date.now() < nudgeDismissedUntil.current) return;
+
+    const { latitude, longitude } = userCoords;
+    const R = 6_371_000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+
+    // Score = sum of incident intensities within 300 m
+    let score = 0;
+    const allPoints = [...supabaseMapPoints, ...vicpolMapPoints];
+    for (const pt of allPoints) {
+      const dLat = toRad(pt.latitude - latitude);
+      const dLng = toRad(pt.longitude - longitude);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(latitude)) * Math.cos(toRad(pt.latitude)) * Math.sin(dLng / 2) ** 2;
+      const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (dist <= 300) score += pt.intensity ?? 1;
+    }
+
+    // Threshold: combined intensity > 15 within 300 m triggers the nudge
+    setShowHotspotNudge(score > 15);
+  }, [userCoords, supabaseMapPoints, vicpolMapPoints, showSafeWalk]);
+
+  const requestContextualSafeRoute = useCallback(async () => {
+    if (!selectedDestination) return;
+
+    const [destLng, destLat] = selectedDestination.coordinates;
+    if (!isWithinSafenetCoverage(destLng, destLat)) {
+      setToastMessage(SAFENET_COVERAGE_ERROR);
+      return;
+    }
+
+    setRouteLoading(true);
+    setRouteError(null);
+    setRouteInfo(null);
+    setToastMessage(null);
+
+    const useCustomStart = directionsMode && routeStartCustom !== null;
+    let originLat: number;
+    let originLng: number;
+
+    if (useCustomStart && routeStartCustom) {
+      const [slng, slat] = routeStartCustom.coordinates;
+      if (!isWithinSafenetCoverage(slng, slat)) {
+        setRouteLoading(false);
+        setRouteLoadingPhase(null);
+        setToastMessage(SAFENET_COVERAGE_ERROR);
+        return;
+      }
+      originLat = slat;
+      originLng = slng;
+      setRouteLoadingPhase("route");
+    } else {
+      setRouteLoadingPhase(userCoords ? "route" : "location");
+      if (userCoords) {
+        originLat = userCoords.latitude;
+        originLng = userCoords.longitude;
+      } else {
+        try {
+          const p = await getCurrentPositionBestEffort({ mode: "routing" });
+          originLat = p.latitude;
+          originLng = p.longitude;
+        } catch {
+          if (!mapCenter) {
+            setRouteLoading(false);
+            setRouteLoadingPhase(null);
+            setRouteError(
+              "Could not get your location in time. Pan the map so your starting area is visible, then try again — or enable location permission."
+            );
+            return;
+          }
+          originLat = mapCenter.latitude;
+          originLng = mapCenter.longitude;
+          setRouteInfo(
+            "GPS timed out — this route starts from the map center. Pan the map if needed, or enable location for your position."
+          );
+        }
+      }
+      if (!isWithinSafenetCoverage(originLng, originLat)) {
+        setRouteLoading(false);
+        setRouteLoadingPhase(null);
+        setToastMessage(SAFENET_COVERAGE_ERROR);
+        return;
+      }
+      setRouteLoadingPhase("route");
+    }
+
+    try {
+      const engineMode = readSafeRouteEngineMode();
+      let clientPathComputed = false;
+      // Holds the in-flight street-snap promise so hybrid mode can await it
+      // if the server upgrade fails and we need to display the snapped path.
+      let snapPromise: Promise<[number, number][] | null> | null = null;
+
+      if (engineMode === "client" || engineMode === "hybrid") {
+        let clientPath: [number, number][] | null = null;
+        try {
+          clientPath = computeClientSafeRoute(
+            { latitude: originLat, longitude: originLng },
+            { latitude: destLat, longitude: destLng },
+            routingIncidents,
+          );
+        } catch {
+          throw new Error("__UNROUTABLE__");
+        }
+        if (clientPath) {
+          clientPathComputed = true;
+          // Start the street-snap in the background immediately.
+          snapPromise = snapRouteToStreets(clientPath);
+          if (engineMode === "client") {
+            // Client-only: wait for the snapped path before displaying anything
+            // so the route always follows real streets.
+            const snapped = await snapPromise;
+            setSafeRouteData(snapped ?? clientPath);
+            return;
+          }
+          // hybrid: keep clientPath + snapPromise in memory as a silent fallback;
+          // don't render the raw grid path — the server result will be shown first.
+        } else if (engineMode === "client") {
+          throw new Error("__UNROUTABLE__");
+        }
+      }
+
+      if (engineMode === "server" || engineMode === "hybrid") {
+        let data: SafeRouteResponse & {
+          error_code?: string;
+          detail?: unknown;
+          hint?: string;
+          attemptedUrl?: string;
+          steps?: string[];
+        };
+        try {
+          const res = await fetch("/api/safe-route", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              origin: { latitude: originLat, longitude: originLng },
+              destination: { latitude: destLat, longitude: destLng },
+              incident_points: routingIncidents,
+              mapbox_profile: "walking",
+              heat_penalty: 14,
+              grid_resolution_meters: 120,
+              padding_meters: 320,
+            }),
+            signal:
+              typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+                ? AbortSignal.timeout(55_000)
+                : undefined,
+          });
+
+          try {
+            data = (await res.json()) as typeof data;
+          } catch {
+            throw new Error("__UNROUTABLE__");
+          }
+
+          if (!res.ok) {
+            // Backend unreachable — if we already have a client-computed path, keep it silently
+            if (res.status === 503 && data.error_code === "BACKEND_UNAVAILABLE") {
+              if (clientPathComputed) {
+                setRouteInfo("Showing grid-based route — Python routing service is offline.");
+                return;
+              }
+              throw new Error("__BACKEND_UNAVAILABLE__");
+            }
+            if (res.status === 404) {
+              throw new Error("__UNROUTABLE__");
+            }
+            const d = data.detail;
+            let msg =
+              typeof d === "string"
+                ? d
+                : Array.isArray(d)
+                  ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
+                  : "Route request failed";
+            const extra: string[] = [];
+            if (typeof data.hint === "string") extra.push(data.hint);
+            if (extra.length) msg = [msg, ...extra].join(" ");
+            throw new Error(msg.trim() || "Route request failed");
+          }
+          const line = responseToLineFeature(data);
+          setSafeRouteData(line.geometry.coordinates as [number, number][]);
+        } catch (serverErr) {
+          // In hybrid mode: server failed — use the snapped client path as fallback.
+          // Await the street-snap (started in parallel earlier) so the displayed
+          // fallback path follows real footpaths instead of cutting through buildings.
+          if (engineMode === "hybrid" && clientPathComputed) {
+            const snapped = snapPromise ? await snapPromise : null;
+            // snapPromise resolves to null on failure; in that case we have no path to show
+            // (we never showed the raw grid path, so better to surface an error).
+            if (!snapped) {
+              if (serverErr instanceof Error && serverErr.name === "AbortError") {
+                setRouteError("Route request timed out. Try again or check your connection.");
+              } else if (
+                serverErr instanceof Error &&
+                (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
+                  serverErr.message.includes("ECONNREFUSED"))
+              ) {
+                setRouteError("Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.");
+              } else {
+                setRouteError("Could not compute route.");
+              }
+              return;
+            }
+            setSafeRouteData(snapped);
+            if (serverErr instanceof Error && serverErr.name === "AbortError") {
+              setRouteInfo("Showing street-snapped route — routing service timed out.");
+            } else if (
+              serverErr instanceof Error &&
+              (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
+                serverErr.message.includes("ECONNREFUSED"))
+            ) {
+              setRouteInfo("Showing street-snapped route — Python routing service is offline.");
+            } else {
+              setRouteInfo("Showing street-snapped route — server upgrade unavailable.");
+            }
+            return;
+          }
+          throw serverErr;
+        }
+      }
+    } catch (e) {
+      setSafeRouteData(null);
+      if (e instanceof Error && e.message === "__UNROUTABLE__") {
+        setToastMessage(SAFENET_UNROUTABLE_ERROR);
+        setRouteError(null);
+        return;
+      }
+      const aborted =
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "TimeoutError") ||
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
+        (e instanceof Error && e.name === "AbortError");
+      if (aborted) {
+        setRouteError("Route request timed out. Try again or check your connection.");
+        return;
+      }
+      if (e instanceof Error && e.message === "__BACKEND_UNAVAILABLE__") {
+        setRouteError("Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.");
+        return;
+      }
+      const raw = e instanceof Error ? e.message : "";
+      if (/no path|not found|404/i.test(raw)) {
+        setToastMessage(SAFENET_UNROUTABLE_ERROR);
+        setRouteError(null);
+        return;
+      }
+      setRouteError(raw || "Could not compute route");
+    } finally {
+      setRouteLoading(false);
+      setRouteLoadingPhase(null);
+    }
+  }, [userCoords, mapCenter, selectedDestination, routingIncidents, directionsMode, routeStartCustom]);
+
+  const closeDestinationCard = useCallback(() => {
+    setSelectedDestination(null);
+    setSafeRouteData(null);
+    setRouteError(null);
+    setRouteInfo(null);
+    setRouteLoadingPhase(null);
+    setDirectionsMode(false);
+    setRouteStartCustom(null);
+  }, []);
+
+  const endContextualRoute = useCallback(() => {
+    setSafeRouteData(null);
+    setSelectedDestination(null);
+    setRouteError(null);
+    setRouteInfo(null);
+    setRouteLoadingPhase(null);
+    setRouteStartCustom(null);
+  }, []);
+
+  const closeDirectionsPlanner = useCallback(() => {
+    setDirectionsMode(false);
+    setRouteStartCustom(null);
+    setRouteError(null);
+    setRouteInfo(null);
+  }, []);
+
   function activeMapPoints(): MapIncidentPoint[] {
     if (activeIncidentTab === "user-reported") return userReportedMapPoints;
     if (activeIncidentTab === "official") return [...supabaseMapPoints, ...vicpolMapPoints];
     return supabaseMapPoints;
   }
 
+  const contextualDestinationMarker = useMemo(() => {
+    if (!selectedDestination) return null;
+    const [lng, lat] = selectedDestination.coordinates;
+    return { name: selectedDestination.name, lng, lat };
+  }, [selectedDestination]);
+
+  const contextualOriginMarker = useMemo(() => {
+    if (!directionsMode || !routeStartCustom) return null;
+    const [lng, lat] = routeStartCustom.coordinates;
+    return { name: routeStartCustom.name, lng, lat };
+  }, [directionsMode, routeStartCustom]);
+
+  const hasContextualRoute =
+    Array.isArray(safeRouteData) && safeRouteData.length >= 2;
+
   return (
     <main className="relative h-screen w-screen overflow-hidden">
+      <RouteToast message={toastMessage} variant="error" onDismiss={dismissToast} />
+
+      {/* Incoming SOS alert banner — Realtime INSERT on active_sos */}
+      <IncomingSOSBanner
+        sos={incomingSOS}
+        onDismiss={() => setIncomingSOS(null)}
+        onLocate={(coords) =>
+          setFlyTarget({ latitude: coords[1], longitude: coords[0], zoom: 17 })
+        }
+      />
+
+      {/* Safe Walk dead-man's-switch timer */}
+      {showSafeWalk && (
+        <SafeWalkTimer
+          userCoords={userCoords}
+          onEnd={() => setShowSafeWalk(false)}
+        />
+      )}
+
+      {/* Hotspot nudge — shown when user enters a high-incident zone */}
+      {showHotspotNudge && !showSafeWalk && (
+        <HotspotNudge
+          onStart={() => {
+            setShowHotspotNudge(false);
+            setShowSafeWalk(true);
+          }}
+          onDismiss={() => {
+            setShowHotspotNudge(false);
+            // Don't re-nudge for 10 minutes after dismissal
+            nudgeDismissedUntil.current = Date.now() + 10 * 60 * 1000;
+          }}
+        />
+      )}
+
       <div className="absolute inset-0 z-0">
         <RadiantMap
           onFlyTo={flyTarget}
@@ -404,8 +916,46 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           sosAlerts={sosMapAlerts}
           friendLocations={friendLocations}
           activeRoute={activeRoute}
+          contextualDestination={contextualDestinationMarker}
+          contextualOrigin={contextualOriginMarker}
+          contextualRouteCoordinates={safeRouteData}
+          policeStations={showPoliceOnMap ? VIC_POLICE_STATIONS : []}
+          healthFacilities={showHealthFacilitiesOnMap ? VIC_HEALTH_FACILITIES : []}
         />
       </div>
+
+      {directionsMode && (
+        <RoutePlannerPanel
+          mapCenter={mapCenter}
+          hasUserLocation={Boolean(userCoords)}
+          hasActiveRoute={hasContextualRoute}
+          onEndRoute={endContextualRoute}
+          routeStartCustom={routeStartCustom}
+          onRouteStartCustomChange={setRouteStartCustom}
+          routeEnd={selectedDestination}
+          onRouteEndChange={setSelectedDestination}
+          routeLoading={routeLoading}
+          routeLoadingPhase={routeLoadingPhase}
+          routeError={routeError}
+          routeInfo={routeInfo}
+          onGetSafeRoute={requestContextualSafeRoute}
+          onClose={closeDirectionsPlanner}
+        />
+      )}
+
+      {!directionsMode && (
+        <ContextualDirectionsCards
+          selectedDestination={selectedDestination}
+          hasActiveRoute={hasContextualRoute}
+          routeLoading={routeLoading}
+          routeLoadingPhase={routeLoadingPhase}
+          routeError={routeError}
+          routeInfo={routeInfo}
+          onGetSafeRoute={requestContextualSafeRoute}
+          onCloseDestination={closeDestinationCard}
+          onEndRoute={endContextualRoute}
+        />
+      )}
 
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
@@ -422,9 +972,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           />
         </div>
 
-        <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
+        <div className="pointer-events-auto absolute right-0 top-[92px] z-40 sm:right-1">
           <AreaIncidentSummary
-            className="pointer-events-auto"
             center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
             vicpolItems={vicpolItems}
             supabaseItems={supabaseItems}
@@ -432,16 +981,30 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
           />
         </div>
 
+        <Suspense fallback={null}>
+          <WelcomeBanner authUser={authUser} />
+        </Suspense>
+
         <TopNav
-          reputation={currentUser}
+          reputation={authUser ? reputationForAuthUser(authUser) : currentUser}
           user={authUser}
           mapCenter={mapCenter}
           activeIncidentTab={activeIncidentTab}
           onIncidentTabChange={setActiveIncidentTab}
           onSearchSelectArea={handleSelectArea}
-          onLoginClick={() => {}}
-          onSignupClick={() => {}}
           onLogout={handleLogout}
+          onViewPastReports={handleViewPastReports}
+          directionsMode={directionsMode}
+          onDirectionsModeChange={(active) => {
+            setDirectionsMode(active);
+            if (!active) setRouteStartCustom(null);
+            setRouteError(null);
+            setRouteInfo(null);
+          }}
+          showPoliceOnMap={showPoliceOnMap}
+          onShowPoliceOnMapChange={setShowPoliceOnMap}
+          showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
+          onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
         />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
@@ -460,17 +1023,22 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
             onViewMap={(coords) => setFlyTarget(coords)}
           />
         ) : (
-          <IncidentFeed
-            reports={submittedUserReports}
-            onViewMap={handleViewMap}
-            reserveTopPx={220}
-            collapsedLabel={
-              submittedUserReports.length > 0
-                ? `User reports (${submittedUserReports.length})`
-                : "User reports"
-            }
-            sheetTitle="User-reported incidents"
-          />
+          <div id="user-reported-panel" className="pointer-events-auto">
+            <IncidentFeed
+              reports={submittedUserReports}
+              onViewMap={handleViewMap}
+              onOpenReporterProfile={(id, name) => setReporterProfile({ id, name })}
+              currentUserId={authUser?.id ?? null}
+              onDeleteReport={handleDeleteReport}
+              reserveTopPx={220}
+              collapsedLabel={
+                submittedUserReports.length > 0
+                  ? `User reports (${submittedUserReports.length})`
+                  : "User reports"
+              }
+              sheetTitle="User-reported incidents"
+            />
+          </div>
         )}
 
         {/* User Reported empty state — only when nothing submitted this session */}
@@ -480,7 +1048,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
               <p className="text-xs text-gray-500">
-                Use the red quick-report button and set a location to add one.
+                Sign up with an 18+ verified account, then use the quick-report button to add one.
               </p>
             </div>
           </div>
@@ -493,6 +1061,9 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         droppedPin={droppedPin}
         onReportSubmitted={handleReportSubmitted}
         onSOSPress={() => setShowSOSSheet(true)}
+        onSafeWalkPress={() => setShowSafeWalk(true)}
+        reportingAllowed={canSubmitReports}
+        onRequireReportingAuth={() => router.push("/signup")}
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
@@ -567,10 +1138,19 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         </div>
       )}
 
-      <AuthModal
-        isOpen={modalState !== "closed"}
-        onClose={() => setModalState("closed")}
-        onAuth={handleAuth}
+      <ReporterProfileModal
+        open={reporterProfile != null}
+        onClose={() => setReporterProfile(null)}
+        reporterId={reporterProfile?.id ?? ""}
+        reporterDisplayName={reporterProfile?.name ?? ""}
+        reports={submittedUserReports.filter(
+          (r) =>
+            `${r.reporterId ?? r.userId ?? ""}`.trim().toLowerCase() ===
+            (reporterProfile?.id ?? "").trim().toLowerCase()
+        )}
+        onViewMap={handleViewMap}
+        currentUserId={authUser?.id ?? null}
+        onDeleteReport={handleDeleteReport}
       />
     </main>
   );

@@ -1,22 +1,25 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Search, X, MapPin, Loader2 } from "lucide-react";
+import { Search, X, MapPin, Building2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
-
-// Victoria bounding box [west, south, east, north]
-const VICTORIA_BBOX = "140.9,-39.2,150.0,-33.9";
-
-interface GeocodingFeature {
-  id: string;
-  text: string;
-  place_name: string;
-  center: [number, number]; // [lng, lat]
-}
+import {
+  searchboxSuggest,
+  searchboxRetrieve,
+  newSessionToken,
+  type SearchSuggestion,
+  MELB_CBD_PROXIMITY,
+} from "@/lib/mapbox-forward-geocode";
 
 interface SearchBarProps {
   mapCenter?: { latitude: number; longitude: number } | null;
-  onSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
+  onSelectArea: (payload: {
+    latitude: number;
+    longitude: number;
+    zoom: number;
+    placeName: string;
+    center: [number, number];
+  }) => void;
 }
 
 function highlightMatch(text: string, query: string) {
@@ -32,72 +35,71 @@ function highlightMatch(text: string, query: string) {
   );
 }
 
+function poiIcon(featureType: string) {
+  if (featureType === "poi") return <Building2 className="h-4 w-4 text-cyan-400" />;
+  return <MapPin className="h-4 w-4 text-gray-400" />;
+}
+
 export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [isFocused, setIsFocused] = useState(false);
-  const [results, setResults] = useState<GeocodingFeature[]>([]);
+  const [results, setResults] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [selecting, setSelecting] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Session token must persist across suggest calls and be passed to retrieve
+  const sessionTokenRef = useRef<string>(newSessionToken());
 
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-  const showDropdown = isFocused && query.trim().length > 0;
+  const showDropdown = isFocused && query.trim().length > 0 && !selecting;
 
-  // Geocode query via Mapbox Places API
-  const geocode = useCallback(async (q: string) => {
-    if (!token || q.length === 0) { setResults([]); return; }
+  const suggest = useCallback(
+    async (q: string) => {
+      if (!token || q.length === 0) { setResults([]); return; }
 
-    // Cancel any in-flight request
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
 
-    setLoading(true);
-    try {
-      const proximity = mapCenter
-        ? `${mapCenter.longitude},${mapCenter.latitude}`
-        : "144.9631,-37.8136"; // fallback: Melbourne CBD only if no map center
+      setLoading(true);
+      try {
+        const proximity = mapCenter
+          ? `${mapCenter.longitude},${mapCenter.latitude}`
+          : MELB_CBD_PROXIMITY;
 
-      const url = new URL(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
-      );
-      url.searchParams.set("access_token", token);
-      url.searchParams.set("country", "au");
-      url.searchParams.set("bbox", VICTORIA_BBOX);
-      url.searchParams.set("proximity", proximity);
-      url.searchParams.set("types", "place,locality,neighborhood,district,poi,address");
-      url.searchParams.set("limit", "8");
-      url.searchParams.set("language", "en");
+        const items = await searchboxSuggest(q, token, {
+          sessionToken: sessionTokenRef.current,
+          proximity,
+          limit: 8,
+          signal: abortRef.current.signal,
+        });
+        setResults(items);
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [token, mapCenter]
+  );
 
-      const res = await fetch(url.toString(), { signal: abortRef.current.signal });
-      const data = await res.json() as { features: GeocodingFeature[] };
-      setResults(data.features ?? []);
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, mapCenter]);
-
-  // Debounce geocoding calls
   useEffect(() => {
     const q = query.trim();
     if (q.length === 0) { setResults([]); setLoading(false); return; }
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => geocode(q), 280);
+    debounceRef.current = setTimeout(() => suggest(q), 280);
 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, geocode]);
+  }, [query, suggest]);
 
-  // Reset active index when results change
   useEffect(() => { setActiveIndex(-1); }, [results]);
 
-  // Click outside to close
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -108,17 +110,46 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleSelect = useCallback((feature: GeocodingFeature) => {
-    onSelectArea({
-      longitude: feature.center[0],
-      latitude: feature.center[1],
-      zoom: 15,
-    });
+  const closeDropdown = useCallback(() => {
     setQuery("");
     setResults([]);
     setIsFocused(false);
     setActiveIndex(-1);
-  }, [onSelectArea]);
+  }, []);
+
+  const handleSelect = useCallback(
+    async (suggestion: SearchSuggestion) => {
+      if (!token) return;
+      setSelecting(true);
+      setLoading(true);
+      try {
+        const loc = await searchboxRetrieve(
+          suggestion.mapbox_id,
+          token,
+          sessionTokenRef.current
+        );
+        // Rotate session token now that this session (suggest+retrieve) is complete
+        sessionTokenRef.current = newSessionToken();
+
+        if (!loc) return;
+        const label = suggestion.place_formatted
+          ? `${suggestion.name}, ${suggestion.place_formatted}`
+          : suggestion.name;
+        onSelectArea({
+          longitude: loc.coordinates[0],
+          latitude: loc.coordinates[1],
+          zoom: suggestion.feature_type === "poi" ? 17 : 14,
+          placeName: label,
+          center: loc.coordinates,
+        });
+        closeDropdown();
+      } finally {
+        setSelecting(false);
+        setLoading(false);
+      }
+    },
+    [token, onSelectArea, closeDropdown]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!showDropdown) return;
@@ -130,27 +161,19 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
       setActiveIndex((i) => Math.max(i - 1, -1));
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
-      handleSelect(results[activeIndex]);
+      void handleSelect(results[activeIndex]);
     } else if (e.key === "Escape") {
       setIsFocused(false);
       setActiveIndex(-1);
     }
   };
 
-  // Scroll active item into view
   useEffect(() => {
     if (activeIndex >= 0 && listRef.current) {
       const item = listRef.current.children[activeIndex] as HTMLElement;
       item?.scrollIntoView({ block: "nearest" });
     }
   }, [activeIndex]);
-
-  // Extract a short subtitle from the full place_name
-  const getSubtitle = (feature: GeocodingFeature) => {
-    const parts = feature.place_name.split(", ");
-    // Remove the first part (which is feature.text) and return the rest
-    return parts.slice(1).join(", ");
-  };
 
   return (
     <div ref={containerRef} className="relative w-full max-w-2xl">
@@ -174,7 +197,7 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setIsFocused(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search suburbs, streets or places..."
+          placeholder="Stations, malls, landmarks, suburbs, or streets…"
           autoComplete="off"
           spellCheck={false}
           className="w-full bg-transparent text-sm font-medium text-gray-100 placeholder-gray-500 outline-none"
@@ -194,23 +217,24 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
         <div className="absolute top-full left-0 right-0 z-50 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-black/90 shadow-2xl backdrop-blur-xl">
           {results.length > 0 ? (
             <div ref={listRef} className="max-h-72 overflow-y-auto py-1.5">
-              {results.map((feature, i) => (
+              {results.map((s, i) => (
                 <button
-                  key={feature.id}
-                  onClick={() => handleSelect(feature)}
+                  key={s.mapbox_id}
+                  type="button"
+                  onClick={() => void handleSelect(s)}
                   className={cn(
                     "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
                     activeIndex === i ? "bg-white/10" : "hover:bg-white/5"
                   )}
                 >
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/8">
-                    <MapPin className="h-4 w-4 text-gray-400" />
+                    {poiIcon(s.feature_type)}
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm leading-snug">
-                      {highlightMatch(feature.text, query.trim())}
+                      {highlightMatch(s.name, query.trim())}
                     </p>
-                    <p className="truncate text-[11px] text-gray-600">{getSubtitle(feature)}</p>
+                    <p className="truncate text-[11px] text-gray-500">{s.place_formatted}</p>
                   </div>
                 </button>
               ))}

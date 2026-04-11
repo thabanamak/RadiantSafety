@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
-import { Info } from "lucide-react";
+import { BarChart3, ChevronLeft, ChevronRight, Info } from "lucide-react";
 
 type Center = { latitude: number; longitude: number; zoom: number };
 
@@ -76,6 +76,7 @@ export default function AreaIncidentSummary({
   active: boolean;
   className?: string;
 }) {
+  const [panelOpen, setPanelOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
 
   const summary = useMemo(() => {
@@ -162,58 +163,123 @@ export default function AreaIncidentSummary({
   if (!active || !center || !summary) return null;
 
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("pointer-events-auto flex flex-row-reverse items-start gap-0", className)}>
+      {/* Toggle tab — right edge, panel expands left (mirrors SOSAreaPanel) */}
+      <button
+        type="button"
+        onClick={() => {
+          setPanelOpen((p) => !p);
+          setInfoOpen(false);
+        }}
+        className={cn(
+          "relative flex h-10 w-8 shrink-0 items-center justify-center rounded-l-xl border border-r-0 transition-all",
+          "border-cyan-500/30 bg-black/90 shadow-lg shadow-cyan-900/20 backdrop-blur-xl",
+          "hover:bg-cyan-500/10 active:scale-95",
+          panelOpen && "border-cyan-500/50"
+        )}
+        aria-label={panelOpen ? "Close area summary" : "Open area summary"}
+      >
+        <BarChart3 className={cn("h-4 w-4", summary.total > 0 ? "text-cyan-400" : "text-gray-500")} />
+        {summary.total > 0 && (
+          <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan-600 px-0.5 text-[9px] font-bold text-white shadow">
+            {summary.total > 99 ? "99+" : summary.total}
+          </span>
+        )}
+        <span className="absolute bottom-0 left-0">
+          {panelOpen ? (
+            <ChevronRight className="h-2.5 w-2.5 text-gray-600" />
+          ) : (
+            <ChevronLeft className="h-2.5 w-2.5 text-gray-600" />
+          )}
+        </span>
+      </button>
+
       <div
         className={cn(
-          "pointer-events-auto rounded-2xl border border-radiant-border bg-radiant-surface/90 p-4 shadow-2xl backdrop-blur-xl"
+          "overflow-hidden transition-all duration-300 ease-in-out",
+          panelOpen ? "w-[360px] opacity-100" : "w-0 opacity-0"
         )}
-        onPointerDown={() => setInfoOpen(false)}
       >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Area summary</p>
-            <button
-              type="button"
-              aria-label="How offences are graded"
-              className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-lg border border-radiant-border bg-radiant-card text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setInfoOpen((p) => !p);
-              }}
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
+        <div className="relative w-[360px] shrink-0">
+          <div
+            className={cn(
+              "pointer-events-auto rounded-l-2xl border-y border-l border-r-0 border-cyan-500/25 bg-radiant-surface/95 p-4 shadow-2xl shadow-cyan-900/20 backdrop-blur-xl"
+            )}
+            onPointerDown={() => setInfoOpen(false)}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Area summary</p>
+                  <button
+                    type="button"
+                    aria-label="How offences are graded"
+                    className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-lg border border-radiant-border bg-radiant-card text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setInfoOpen((p) => !p);
+                    }}
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-gray-100">
+                  Within ~{summary.radiusKm.toFixed(summary.radiusKm < 2 ? 1 : 0)} km of map center
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500">Avg intensity</p>
+                <p className="text-sm font-bold text-gray-100">{summary.avg == null ? "—" : `${summary.avg}/10`}</p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <Stat label="High (8–10)" value={summary.high} valueClass="text-red-300" />
+              <Stat label="Mid (5–7)" value={summary.mid} valueClass="text-amber-200" />
+              <Stat label="Low (1–4)" value={summary.low} valueClass="text-gray-200" />
+            </div>
           </div>
-          <p className="mt-1 text-sm font-semibold text-gray-100">
-            Within ~{summary.radiusKm.toFixed(summary.radiusKm < 2 ? 1 : 0)} km of map center
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs text-gray-500">Avg intensity</p>
-          <p className="text-sm font-bold text-gray-100">{summary.avg == null ? "—" : `${summary.avg}/10`}</p>
-        </div>
-      </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <Stat label="High (8–10)" value={summary.high} valueClass="text-red-300" />
-        <Stat label="Mid (5–7)" value={summary.mid} valueClass="text-amber-200" />
-        <Stat label="Low (1–4)" value={summary.low} valueClass="text-gray-200" />
-      </div>
-      </div>
+          {infoOpen && (
+            <div
+              className="pointer-events-auto absolute left-0 top-2 z-50 w-[340px] rounded-2xl border border-radiant-border bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-100">How offences are graded</p>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    We assign an <span className="text-gray-300">intensity score (1–10)</span> by scanning the incident title
+                    for keywords. The map summary buckets those scores into High/Mid/Low.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg border border-radiant-border bg-radiant-card px-2 py-1 text-[11px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                  onClick={() => setInfoOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
 
-      {infoOpen && (
-        <div
-          className="pointer-events-auto absolute left-0 top-10 z-50 w-[340px] rounded-2xl border border-radiant-border bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-gray-100">How offences are graded</p>
-              <p className="mt-1 text-[11px] text-gray-500">
-                We assign an <span className="text-gray-300">intensity score (1–10)</span> by scanning the incident title
-                for keywords. The map summary buckets those scores into High/Mid/Low.
+              <div className="mt-3 space-y-2 text-[11px] text-gray-500">
+                <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
+                  <p className="font-semibold text-red-300">High (8–10)</p>
+                  <p className="mt-0.5">Keywords like: homicide, murder, shooting, firearm, stabbing, sexual assault, arson.</p>
+                </div>
+                <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
+                  <p className="font-semibold text-amber-200">Mid (5–7)</p>
+                  <p className="mt-0.5">Keywords like: fatal crash, fire, drug, aggravated burglary, carjacking.</p>
+                </div>
+                <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
+                  <p className="font-semibold text-gray-200">Low (1–4)</p>
+                  <p className="mt-0.5">Keywords like: theft, speeding, missing, vandalism, burglary.</p>
+                </div>
+              </div>
+
+              <p className="mt-3 text-[10px] text-gray-600">
+                Note: SOS alerts are never included in these counts — they are not crime data.
               </p>
               <p className="mt-2 text-[11px] text-gray-500">
                 <span className="text-gray-400">Avg intensity</span> is mostly a{" "}
@@ -222,35 +288,9 @@ export default function AreaIncidentSummary({
                 radius (≈{summary.areaKm2.toFixed(0)} km²) keeps huge empty suburbs from looking “max red” from a few dots.
               </p>
             </div>
-            <button
-              type="button"
-              className="shrink-0 rounded-lg border border-radiant-border bg-radiant-card px-2 py-1 text-[11px] font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-              onClick={() => setInfoOpen(false)}
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="mt-3 space-y-2 text-[11px] text-gray-500">
-            <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
-              <p className="font-semibold text-red-300">High (8–10)</p>
-              <p className="mt-0.5">Keywords like: homicide, murder, shooting, firearm, stabbing, sexual assault, arson.</p>
-            </div>
-            <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
-              <p className="font-semibold text-amber-200">Mid (5–7)</p>
-              <p className="mt-0.5">Keywords like: fatal crash, fire, drug, aggravated burglary, carjacking.</p>
-            </div>
-            <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
-              <p className="font-semibold text-gray-200">Low (1–4)</p>
-              <p className="mt-0.5">Keywords like: theft, speeding, missing, vandalism, burglary.</p>
-            </div>
-          </div>
-
-          <p className="mt-3 text-[10px] text-gray-600">
-            Note: SOS alerts are never included in these counts — they are not crime data.
-          </p>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
