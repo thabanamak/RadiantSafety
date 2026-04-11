@@ -1,7 +1,16 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { X } from "lucide-react";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isEmailLinkCallback } from "@/lib/auth-callback-url";
+import { isEmailConfirmed } from "@/lib/supabase-user";
+import {
+  fetchPastReportsForUser,
+  syncProfileFromAuthUser,
+} from "@/lib/supabase/profile-sync";
+import { setStoredUser } from "@/lib/auth-storage";
 import RadiantMap from "@/components/RadiantMap";
 import TopNav from "@/components/TopNav";
 import type { DashboardTab } from "@/components/TopNav";
@@ -29,6 +38,88 @@ function reputationForAuthUser(user: AuthUser): UserReputation {
   };
 }
 
+/** After the user opens the confirmation link, Supabase sends them to `/?welcome=1` — sync storage and UI immediately. */
+function EmailConfirmSync({
+  onConfirmed,
+}: {
+  onConfirmed: (user: AuthUser) => void;
+}) {
+  const router = useRouter();
+  const finished = useRef(false);
+
+  useEffect(() => {
+    const { client, error } = getSupabaseBrowserClient();
+    if (error || !client) return;
+
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((event, session) => {
+      const user = session?.user;
+      if (!user || !isEmailConfirmed(user)) return;
+      if (event === "INITIAL_SESSION" && !isEmailLinkCallback()) return;
+      if (
+        event !== "SIGNED_IN" &&
+        !(event === "INITIAL_SESSION" && isEmailLinkCallback())
+      ) {
+        return;
+      }
+      if (finished.current) return;
+      void (async () => {
+        try {
+          const authUser = await syncProfileFromAuthUser(client, user);
+          if (finished.current) return;
+          finished.current = true;
+          setStoredUser(authUser);
+          onConfirmed(authUser);
+          if (
+            typeof window !== "undefined" &&
+            (isEmailLinkCallback() || window.location.hash)
+          ) {
+            router.replace("/?welcome=1", { scroll: false });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      })();
+    });
+
+    return () => subscription.unsubscribe();
+  }, [onConfirmed, router]);
+
+  return null;
+}
+
+function WelcomeBanner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  if (searchParams.get("welcome") !== "1") return null;
+
+  const user = getStoredUser();
+
+  return (
+    <div className="pointer-events-auto absolute left-1/2 top-[72px] z-40 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl border border-emerald-500/35 bg-emerald-950/90 px-4 py-3 shadow-xl backdrop-blur-sm">
+      <div className="flex items-start gap-3">
+        <p className="flex-1 text-center text-sm leading-relaxed text-emerald-50 sm:text-left">
+          <span className="font-semibold text-white">
+            Welcome{user?.name ? `, ${user.name}` : ""}!
+          </span>{" "}
+          You&apos;re signed in — your reputation starts at{" "}
+          {user?.reputationScore ?? DEFAULT_REPUTATION_SCORE}. Explore the Pulse
+          and map to get started.
+        </p>
+        <button
+          type="button"
+          onClick={() => router.replace("/", { scroll: false })}
+          className="shrink-0 rounded-lg p-1 text-emerald-200/80 transition-colors hover:bg-emerald-900/50 hover:text-white"
+          aria-label="Dismiss"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const pathname = usePathname();
 
@@ -40,12 +131,43 @@ export default function Dashboard() {
 
   const [activeTab, setActiveTab] = useState<DashboardTab>("pulse");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [pastReportsCount, setPastReportsCount] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     if (pathname === "/") {
       setAuthUser(getStoredUser());
     }
+  }, [pathname]);
+
+  /** Re-sync profile + past reports from Supabase so UI never shows another user’s cached name (e.g. old localStorage). */
+  useEffect(() => {
+    if (pathname !== "/") return;
+    let cancelled = false;
+    void (async () => {
+      const { client, error } = getSupabaseBrowserClient();
+      if (error || !client) return;
+      const {
+        data: { session },
+      } = await client.auth.getSession();
+      if (!session?.user) {
+        if (getStoredUser()?.id) {
+          clearStoredUser();
+          if (!cancelled) setAuthUser(null);
+        }
+        if (!cancelled) setPastReportsCount(0);
+        return;
+      }
+      const u = await syncProfileFromAuthUser(client, session.user);
+      if (cancelled) return;
+      setStoredUser(u);
+      setAuthUser(u);
+      const reports = await fetchPastReportsForUser(client, u.id ?? session.user.id);
+      if (!cancelled) setPastReportsCount(reports.length);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [pathname]);
 
   const [newsLoaded, setNewsLoaded] = useState(false);
@@ -113,11 +235,18 @@ export default function Dashboard() {
       </div>
 
       <div className="pointer-events-none absolute inset-0 z-10">
+        <EmailConfirmSync onConfirmed={setAuthUser} />
+
+        <Suspense fallback={null}>
+          <WelcomeBanner />
+        </Suspense>
+
         <TopNav
           reputation={
             authUser ? reputationForAuthUser(authUser) : mockCurrentUser
           }
           user={authUser}
+          pastReportsCount={pastReportsCount}
           reports={activeTab === "news" ? [] : userReports}
           onSearchSelectIncident={handleViewMap}
           onSearchSelectArea={handleSelectArea}

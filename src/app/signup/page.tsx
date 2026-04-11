@@ -1,18 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import AuthForm from "@/components/AuthForm";
-import {
-  DEFAULT_REPUTATION_SCORE,
-  getStoredUser,
-  setStoredUser,
-} from "@/lib/auth-storage";
 
 export default function SignupPage() {
-  const router = useRouter();
-
   return (
     <div className="flex min-h-screen flex-col bg-radiant-dark">
       <header className="flex items-center gap-3 border-b border-radiant-border px-5 py-4">
@@ -30,21 +22,7 @@ export default function SignupPage() {
 
       <main className="flex flex-1 flex-col items-center justify-center px-5 py-10">
         <div className="w-full max-w-sm space-y-4">
-          <AuthForm
-            mode="signup"
-            onSuccess={(user) => {
-              const prev = getStoredUser();
-              setStoredUser({
-                ...user,
-                reputationScore:
-                  prev?.email === user.email &&
-                  typeof prev.reputationScore === "number"
-                    ? prev.reputationScore
-                    : DEFAULT_REPUTATION_SCORE,
-              });
-              router.push("/");
-            }}
-          />
+          <AuthForm mode="signup" />
         </div>
       </main>
     </div>

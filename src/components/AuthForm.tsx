@@ -7,26 +7,28 @@ import { Mail, Lock, User, Eye, EyeOff, Shield } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { AuthUser } from "@/lib/auth-storage";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isEmailConfirmed } from "@/lib/supabase-user";
+import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
 
 type AuthMode = "login" | "signup";
 
 interface AuthFormProps {
   mode: AuthMode;
-  onSuccess: (user: AuthUser) => void;
+  /**
+   * Called after a successful log in with a confirmed email only.
+   * Sign-up never uses this — users verify via email (confirmation link to home) or sign in on the login page.
+   */
+  onAuthenticated?: (user: AuthUser) => void;
 }
 
-function displayNameFromUser(
-  meta: Record<string, unknown> | undefined,
-  email: string
-): string {
-  const full = meta?.full_name;
-  const display = meta?.display_name;
-  if (typeof full === "string" && full.trim()) return full.trim();
-  if (typeof display === "string" && display.trim()) return display.trim();
-  return email.split("@")[0] || "User";
+function formatSignupError(message: string): string {
+  if (/confirmation email|sending.*email/i.test(message)) {
+    return `${message} — Open Supabase Dashboard → Authentication → Providers → Email and either turn off “Confirm email” (fine for local dev) or finish SMTP under Project Settings → Authentication.`;
+  }
+  return message;
 }
 
-export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
+export default function AuthForm({ mode, onAuthenticated }: AuthFormProps) {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -52,52 +54,70 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
       return;
     }
 
+    const emailTrim = form.email.trim();
+    const waitingHref = `/waiting?email=${encodeURIComponent(emailTrim)}`;
+
     try {
       if (mode === "signup") {
+        const origin =
+          typeof window !== "undefined" ? window.location.origin : "";
         const { data, error } = await client.auth.signUp({
-          email: form.email.trim(),
+          email: emailTrim,
           password: form.password,
           options: {
             data: {
               full_name: form.name.trim(),
               display_name: form.name.trim(),
             },
-            emailRedirectTo:
-              typeof window !== "undefined"
-                ? `${window.location.origin}/`
-                : undefined,
+            emailRedirectTo: origin
+              ? `${origin}/?welcome=1`
+              : undefined,
           },
         });
 
         if (error) {
-          setErrorMessage(error.message);
+          setErrorMessage(formatSignupError(error.message));
           return;
         }
 
-        if (data.session?.user) {
-          const u = data.session.user;
-          onSuccess({
-            name: displayNameFromUser(u.user_metadata, u.email ?? form.email),
-            email: u.email ?? form.email,
-          });
+        // Never treat sign-up as "signed in" — clear any session Supabase may have created
+        // (e.g. when Confirm email is off) so the user only becomes signed in after the
+        // verification link is used (dashboard) or they log in explicitly (/login).
+        if (data.session) {
+          await client.auth.signOut();
+        }
+
+        const user = data.user;
+        const confirmedInDb = Boolean(user && isEmailConfirmed(user));
+
+        if (confirmedInDb && user) {
+          // Confirm email disabled in project: account exists but user must still sign in with password
+          router.replace("/login?registered=1");
           setForm({ name: "", email: "", password: "" });
           return;
         }
 
-        setInfoMessage(
-          "Account created. If email confirmation is enabled, check your inbox to verify before signing in."
-        );
+        router.replace(waitingHref);
         setForm({ name: "", email: "", password: "" });
         return;
       }
 
       const { data, error } = await client.auth.signInWithPassword({
-        email: form.email.trim(),
+        email: emailTrim,
         password: form.password,
       });
 
       if (error) {
-        setErrorMessage(error.message);
+        const code = (error as { code?: string }).code;
+        const msg = error.message ?? "";
+        if (
+          code === "email_not_confirmed" ||
+          /email.*not.*confirm|not.*confirmed|confirm.*email/i.test(msg)
+        ) {
+          router.replace(waitingHref);
+          return;
+        }
+        setErrorMessage(msg);
         return;
       }
 
@@ -107,10 +127,13 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
         return;
       }
 
-      onSuccess({
-        name: displayNameFromUser(u.user_metadata, u.email),
-        email: u.email,
-      });
+      if (!isEmailConfirmed(u)) {
+        router.replace(waitingHref);
+        return;
+      }
+
+      const authUser = await syncProfileFromAuthUser(client, u);
+      onAuthenticated?.(authUser);
       setForm({ name: "", email: "", password: "" });
     } catch (err) {
       const message =

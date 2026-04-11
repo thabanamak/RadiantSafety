@@ -1,7 +1,9 @@
 export interface AuthUser {
+  /** Supabase `auth.users` id — use to match `profiles.id` / `past_reports.user_id`. */
+  id?: string;
   name: string;
   email: string;
-  /** Persisted reputation score; new accounts start at 50. */
+  /** Reputation from `profiles.reputation` (default 50). */
   reputationScore?: number;
 }
 

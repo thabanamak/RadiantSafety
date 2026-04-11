@@ -27,6 +27,8 @@ export type DashboardTab = "pulse" | "news";
 interface TopNavProps {
   reputation: UserReputation;
   user: AuthUser | null;
+  /** Rows in `past_reports` for this user (from Supabase). */
+  pastReportsCount?: number;
   reports: UserReport[];
   onSearchSelectIncident: (report: UserReport) => void;
   onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
@@ -39,6 +41,7 @@ interface TopNavProps {
 export default function TopNav({
   reputation,
   user,
+  pastReportsCount = 0,
   reports,
   onSearchSelectIncident,
   onSearchSelectArea,
@@ -103,6 +106,7 @@ export default function TopNav({
           <AccountDropdown
             user={user}
             reputation={reputation}
+            pastReportsCount={pastReportsCount}
             onLogout={onLogout}
             onViewPastReports={onViewPastReports}
           />
@@ -132,11 +136,13 @@ export default function TopNav({
 function AccountDropdown({
   user,
   reputation,
+  pastReportsCount,
   onLogout,
   onViewPastReports,
 }: {
   user: AuthUser;
   reputation: UserReputation;
+  pastReportsCount: number;
   onLogout: () => void;
   onViewPastReports: () => void;
 }) {
@@ -185,6 +191,9 @@ function AccountDropdown({
           <div className="px-3 py-2">
             <p className="text-xs font-semibold text-gray-200">{user.name}</p>
             <p className="truncate text-[11px] text-gray-500">{user.email}</p>
+            <p className="mt-1 text-[10px] text-gray-600">
+              Saved reports: {pastReportsCount}
+            </p>
           </div>
 
           <div className="mx-2 mb-2 rounded-lg border border-radiant-border bg-radiant-card/80 px-3 py-2">

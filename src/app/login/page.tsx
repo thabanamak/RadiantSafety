@@ -1,14 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
 import AuthForm from "@/components/AuthForm";
-import {
-  DEFAULT_REPUTATION_SCORE,
-  getStoredUser,
-  setStoredUser,
-} from "@/lib/auth-storage";
+import { setStoredUser } from "@/lib/auth-storage";
+
+function RegisteredBanner() {
+  const searchParams = useSearchParams();
+  if (searchParams.get("registered") !== "1") return null;
+
+  return (
+    <div
+      role="status"
+      className="mb-4 rounded-xl border border-emerald-500/35 bg-emerald-950/50 px-4 py-3 text-center text-xs leading-relaxed text-emerald-100 sm:text-sm"
+    >
+      Account created. Sign in with your email and password to continue.
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,18 +41,13 @@ export default function LoginPage() {
 
       <main className="flex flex-1 flex-col items-center justify-center px-5 py-10">
         <div className="w-full max-w-sm space-y-4">
+          <Suspense fallback={null}>
+            <RegisteredBanner />
+          </Suspense>
           <AuthForm
             mode="login"
-            onSuccess={(user) => {
-              const prev = getStoredUser();
-              setStoredUser({
-                ...user,
-                reputationScore:
-                  prev?.email === user.email &&
-                  typeof prev.reputationScore === "number"
-                    ? prev.reputationScore
-                    : DEFAULT_REPUTATION_SCORE,
-              });
+            onAuthenticated={(user) => {
+              setStoredUser(user);
               router.push("/");
             }}
           />
