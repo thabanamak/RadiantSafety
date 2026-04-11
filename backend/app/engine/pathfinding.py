@@ -184,6 +184,11 @@ def _heat_at(lat: float, lon: float, sources: Sequence[HeatSource]) -> float:
     return raw / (1.0 + raw)
 
 
+def heat_value_at(lat: float, lon: float, sources: Sequence[HeatSource]) -> float:
+    """Incident-derived heat in [0, 1] at a point (for road-graph edge costs)."""
+    return _heat_at(lat, lon, sources)
+
+
 def _build_heat_grid(
     rows: int,
     cols: int,

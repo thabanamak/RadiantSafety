@@ -1,6 +1,6 @@
 "use client";
 
-import { LogIn, UserPlus, LogOut, ChevronDown, ShieldAlert, Users } from "lucide-react";
+import { LogIn, UserPlus, LogOut, ChevronDown, ShieldAlert, Users, Navigation } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
 import type { UserReputation } from "@/lib/types";
@@ -20,10 +20,18 @@ interface TopNavProps {
   mapCenter?: { latitude: number; longitude: number } | null;
   activeIncidentTab: IncidentTab;
   onIncidentTabChange: (tab: IncidentTab) => void;
-  onSearchSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
+  onSearchSelectArea: (payload: {
+    latitude: number;
+    longitude: number;
+    zoom: number;
+    placeName: string;
+    center: [number, number];
+  }) => void;
   onLoginClick: () => void;
   onSignupClick: () => void;
   onLogout: () => void;
+  directionsMode?: boolean;
+  onDirectionsModeChange?: (active: boolean) => void;
 }
 
 export default function TopNav({
@@ -36,6 +44,8 @@ export default function TopNav({
   onLoginClick,
   onSignupClick,
   onLogout,
+  directionsMode = false,
+  onDirectionsModeChange,
 }: TopNavProps) {
   return (
     <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
@@ -94,10 +104,23 @@ export default function TopNav({
 
       {/* Row 2: Big centered search */}
       <div className="flex flex-col items-center gap-3 px-5">
-        <SearchBar
-          mapCenter={mapCenter}
-          onSelectArea={onSearchSelectArea}
-        />
+        <SearchBar mapCenter={mapCenter} onSelectArea={onSearchSelectArea} />
+
+        {onDirectionsModeChange && (
+          <button
+            type="button"
+            onClick={() => onDirectionsModeChange(!directionsMode)}
+            className={cn(
+              "flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition-all",
+              directionsMode
+                ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200 shadow-md shadow-cyan-500/20"
+                : "border-white/15 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white"
+            )}
+          >
+            <Navigation className="h-3.5 w-3.5" />
+            {directionsMode ? "Exit directions planner" : "Directions planner"}
+          </button>
+        )}
 
         {/* Incident tab pills */}
         <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-1 backdrop-blur-md shadow-lg">

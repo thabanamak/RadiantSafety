@@ -101,6 +101,21 @@ const safeRouteLayer: LayerProps = {
   },
 };
 
+const contextualSafeRouteLayer: LayerProps = {
+  id: "contextual-safe-route-line",
+  type: "line",
+  source: "contextual-safe-route",
+  layout: {
+    "line-join": "round",
+    "line-cap": "round",
+  },
+  paint: {
+    "line-color": "#00BFFF",
+    "line-width": 5,
+    "line-opacity": 0.95,
+  },
+};
+
 export type DroppedPin = {
   latitude: number;
   longitude: number;
@@ -127,8 +142,14 @@ interface RadiantMapProps {
   friendLocations?: FriendLocation[];
   /** Active route geometry from Directions feature — rendered as a blue polyline */
   activeRoute?: { geometry: GeoJSON.LineString } | null;
-  /** Heat-aware backend route (cyan line) */
+  /** Heat-aware backend route (cyan line) — legacy panel flow */
   safeRouteLine?: SafeRouteLineFeature | null;
+  /** Search-driven destination marker (Mapbox Marker) */
+  contextualDestination?: { name: string; lng: number; lat: number } | null;
+  /** Directions planner — custom start (when not using current location) */
+  contextualOrigin?: { name: string; lng: number; lat: number } | null;
+  /** GeoJSON LineString coordinates [lng, lat][] — contextual safe route, drawn above heatmap */
+  contextualRouteCoordinates?: [number, number][] | null;
 }
 
 export default function RadiantMap({
@@ -144,6 +165,9 @@ export default function RadiantMap({
   friendLocations = [],
   activeRoute,
   safeRouteLine,
+  contextualDestination,
+  contextualOrigin,
+  contextualRouteCoordinates,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [viewState, setViewState] = useState({
@@ -218,6 +242,20 @@ export default function RadiantMap({
     );
   }, [safeRouteLine]);
 
+  useEffect(() => {
+    const coords = contextualRouteCoordinates;
+    if (!coords?.length || coords.length < 2 || !mapRef.current) return;
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    mapRef.current.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: { top: 100, bottom: 200, left: 48, right: 48 }, duration: 1400, pitch: 40 }
+    );
+  }, [contextualRouteCoordinates]);
+
   const onMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
       setViewState(evt.viewState);
@@ -272,6 +310,20 @@ export default function RadiantMap({
         </Source>
       )}
 
+      {contextualRouteCoordinates && contextualRouteCoordinates.length >= 2 && (
+        <Source
+          id="contextual-safe-route"
+          type="geojson"
+          data={{
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: contextualRouteCoordinates },
+          }}
+        >
+          <Layer {...contextualSafeRouteLayer} />
+        </Source>
+      )}
+
       {/* GPS "ping me" marker — pulsing blue dot */}
       {gpsPin && (
         <Marker latitude={gpsPin.latitude} longitude={gpsPin.longitude} anchor="center">
@@ -323,6 +375,32 @@ export default function RadiantMap({
           </Marker>
         );
       })}
+
+      {/* Directions planner — custom start */}
+      {contextualOrigin && (
+        <Marker latitude={contextualOrigin.lat} longitude={contextualOrigin.lng} anchor="bottom">
+          <div className="flex flex-col items-center">
+            <div className="rounded-md border border-black/20 bg-teal-950/95 px-1.5 py-0.5 text-[10px] font-medium text-teal-100 shadow-md max-w-[200px] truncate">
+              {contextualOrigin.name}
+            </div>
+            <div className="h-0 w-0 border-x-[7px] border-x-transparent border-t-[9px] border-t-teal-900 drop-shadow-md" />
+            <div className="-mt-px h-3 w-3 rounded-full border-2 border-white bg-teal-500 shadow-lg ring-1 ring-black/30" />
+          </div>
+        </Marker>
+      )}
+
+      {/* Search-selected destination — standard pin */}
+      {contextualDestination && (
+        <Marker latitude={contextualDestination.lat} longitude={contextualDestination.lng} anchor="bottom">
+          <div className="flex flex-col items-center">
+            <div className="rounded-md border border-black/20 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-900 shadow-md max-w-[200px] truncate">
+              {contextualDestination.name}
+            </div>
+            <div className="h-0 w-0 border-x-[7px] border-x-transparent border-t-[9px] border-t-white drop-shadow-md" />
+            <div className="-mt-px h-3 w-3 rounded-full border-2 border-white bg-rose-500 shadow-lg ring-1 ring-black/30" />
+          </div>
+        </Marker>
+      )}
 
       {/* Manually dropped pin — animated colour-melt */}
       {droppedPin && (

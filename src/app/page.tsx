@@ -1,20 +1,40 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import RadiantMap, { type DroppedPin } from "@/components/RadiantMap";
+import type { DroppedPin } from "@/components/RadiantMap";
+
+/** Mapbox / react-map-gl touch `window` — must not SSR or the whole page can white-screen. */
+const RadiantMap = dynamic(() => import("@/components/RadiantMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center bg-[#0a0a0a] text-sm text-gray-400">
+      Loading map…
+    </div>
+  ),
+});
 import TopNav from "@/components/TopNav";
 import type { AuthUser, IncidentTab } from "@/components/TopNav";
 import QuickReportFAB, { type PinLocation } from "@/components/QuickReportFAB";
 import AuthModal from "@/components/AuthModal";
-import SafeRoutePanel from "@/components/SafeRoutePanel";
-import { currentUser, MELBOURNE_CENTER } from "@/lib/mock-data";
+import ContextualDirectionsCards from "@/components/ContextualDirectionsCards";
+import type { SelectedDestination } from "@/components/ContextualDirectionsCards";
+import RoutePlannerPanel from "@/components/RoutePlannerPanel";
+import RouteToast from "@/components/RouteToast";
+import {
+  isWithinSafenetCoverage,
+  SAFENET_COVERAGE_ERROR,
+  SAFENET_UNROUTABLE_ERROR,
+} from "@/lib/safenet-bbox";
+import { currentUser } from "@/lib/mock-data";
+import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
 import {
   capIncidents,
   responseToLineFeature,
   type SafeRouteIncident,
-  type SafeRouteLineFeature,
   type SafeRouteResponse,
 } from "@/lib/safe-route";
+import { computeClientSafeRoute, readSafeRouteEngineMode } from "@/lib/client-safe-route";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
@@ -105,17 +125,42 @@ export default function Dashboard() {
   // Directions — active route for the map; populated by DirectionsController
   const [activeRoute, setActiveRoute] = useState<{ geometry: GeoJSON.LineString } | null>(null);
 
-  const [safeRouteLine, setSafeRouteLine] = useState<SafeRouteLineFeature | null>(null);
+  const [selectedDestination, setSelectedDestination] = useState<SelectedDestination | null>(null);
+  const [safeRouteData, setSafeRouteData] = useState<[number, number][] | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [routeLoadingPhase, setRouteLoadingPhase] = useState<"location" | "route" | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeInfo, setRouteInfo] = useState<string | null>(null);
+  const [directionsMode, setDirectionsMode] = useState(false);
+  const [routeStartCustom, setRouteStartCustom] = useState<SelectedDestination | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const dismissToast = useCallback(() => setToastMessage(null), []);
 
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
   }, []);
 
   const handleSelectArea = useCallback(
-    (coords: { latitude: number; longitude: number; zoom: number }) => {
-      setFlyTarget(coords);
+    (payload: {
+      latitude: number;
+      longitude: number;
+      zoom: number;
+      placeName: string;
+      center: [number, number];
+    }) => {
+      setFlyTarget({
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        zoom: payload.zoom,
+      });
+      setSelectedDestination({
+        name: payload.placeName,
+        coordinates: payload.center,
+      });
+      setSafeRouteData(null);
+      setRouteError(null);
+      setRouteInfo(null);
     },
     []
   );
@@ -196,10 +241,6 @@ export default function Dashboard() {
     setDropPinMode(active);
   }, []);
 
-  const togglePickEndOnMap = useCallback(() => {
-    setDropPinMode((d) => !d);
-  }, []);
-
   const handlePinDropped = useCallback((pin: DroppedPin) => {
     setDroppedPin(pin);
     setDropPinMode(false);
@@ -257,101 +298,203 @@ export default function Dashboard() {
     return capIncidents(raw);
   }, [vicpolItems, supabaseItems]);
 
-  const fetchSafeRoute = useCallback(async () => {
-    if (!gpsPin || !droppedPin) return;
+  const requestContextualSafeRoute = useCallback(async () => {
+    if (!selectedDestination) return;
+
+    const [destLng, destLat] = selectedDestination.coordinates;
+    if (!isWithinSafenetCoverage(destLng, destLat)) {
+      setToastMessage(SAFENET_COVERAGE_ERROR);
+      return;
+    }
+
     setRouteLoading(true);
     setRouteError(null);
-    try {
-      const res = await fetch("/api/safe-route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          origin: { latitude: gpsPin.latitude, longitude: gpsPin.longitude },
-          destination: { latitude: droppedPin.latitude, longitude: droppedPin.longitude },
-          incident_points: routingIncidents,
-          mapbox_profile: "walking",
-          heat_penalty: 14,
-          grid_resolution_meters: 120,
-          padding_meters: 320,
-        }),
-      });
-      const data = (await res.json()) as SafeRouteResponse & {
-        detail?: unknown;
-        hint?: string;
-      };
-      if (!res.ok) {
-        const d = data.detail;
-        const msg =
-          typeof d === "string"
-            ? d
-            : Array.isArray(d)
-              ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
-              : data.hint ?? "Route request failed";
-        throw new Error(msg || "Route request failed");
+    setRouteInfo(null);
+    setToastMessage(null);
+
+    const useCustomStart = directionsMode && routeStartCustom !== null;
+    let originLat: number;
+    let originLng: number;
+
+    if (useCustomStart && routeStartCustom) {
+      const [slng, slat] = routeStartCustom.coordinates;
+      if (!isWithinSafenetCoverage(slng, slat)) {
+        setRouteLoading(false);
+        setRouteLoadingPhase(null);
+        setToastMessage(SAFENET_COVERAGE_ERROR);
+        return;
       }
-      setSafeRouteLine(responseToLineFeature(data));
+      originLat = slat;
+      originLng = slng;
+      setRouteLoadingPhase("route");
+    } else {
+      setRouteLoadingPhase(userCoords ? "route" : "location");
+      if (userCoords) {
+        originLat = userCoords.latitude;
+        originLng = userCoords.longitude;
+      } else {
+        try {
+          const p = await getCurrentPositionBestEffort({ mode: "routing" });
+          originLat = p.latitude;
+          originLng = p.longitude;
+        } catch {
+          if (!mapCenter) {
+            setRouteLoading(false);
+            setRouteLoadingPhase(null);
+            setRouteError(
+              "Could not get your location in time. Pan the map so your starting area is visible, then try again — or enable location permission."
+            );
+            return;
+          }
+          originLat = mapCenter.latitude;
+          originLng = mapCenter.longitude;
+          setRouteInfo(
+            "GPS timed out — this route starts from the map center. Pan the map if needed, or enable location for your position."
+          );
+        }
+      }
+      if (!isWithinSafenetCoverage(originLng, originLat)) {
+        setRouteLoading(false);
+        setRouteLoadingPhase(null);
+        setToastMessage(SAFENET_COVERAGE_ERROR);
+        return;
+      }
+      setRouteLoadingPhase("route");
+    }
+
+    try {
+      const engineMode = readSafeRouteEngineMode();
+      let usedClientEngine = false;
+
+      if (engineMode === "client" || engineMode === "hybrid") {
+        let clientPath: [number, number][] | null = null;
+        try {
+          clientPath = computeClientSafeRoute(
+            { latitude: originLat, longitude: originLng },
+            { latitude: destLat, longitude: destLng },
+            routingIncidents,
+          );
+        } catch {
+          throw new Error("__UNROUTABLE__");
+        }
+        if (clientPath) {
+          setSafeRouteData(clientPath);
+          usedClientEngine = true;
+          if (engineMode === "client") {
+            return;
+          }
+        } else if (engineMode === "client") {
+          throw new Error("__UNROUTABLE__");
+        }
+      }
+
+      if (engineMode === "server" || (engineMode === "hybrid" && !usedClientEngine)) {
+        const res = await fetch("/api/safe-route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            origin: { latitude: originLat, longitude: originLng },
+            destination: { latitude: destLat, longitude: destLng },
+            incident_points: routingIncidents,
+            mapbox_profile: "walking",
+            heat_penalty: 14,
+            grid_resolution_meters: 120,
+            padding_meters: 320,
+          }),
+          signal:
+            typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+              ? AbortSignal.timeout(55_000)
+              : undefined,
+        });
+
+        let data: SafeRouteResponse & {
+          detail?: unknown;
+          hint?: string;
+          attemptedUrl?: string;
+          steps?: string[];
+        };
+        try {
+          data = (await res.json()) as typeof data;
+        } catch {
+          throw new Error("__UNROUTABLE__");
+        }
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error("__UNROUTABLE__");
+          }
+          const d = data.detail;
+          let msg =
+            typeof d === "string"
+              ? d
+              : Array.isArray(d)
+                ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
+                : "Route request failed";
+          const extra: string[] = [];
+          if (typeof data.hint === "string") extra.push(data.hint);
+          if (typeof data.attemptedUrl === "string") extra.push(`URL: ${data.attemptedUrl}`);
+          if (Array.isArray(data.steps)) extra.push(...data.steps);
+          if (extra.length) msg = [msg, ...extra].join(" ");
+          throw new Error(msg.trim() || "Route request failed");
+        }
+        const line = responseToLineFeature(data);
+        setSafeRouteData(line.geometry.coordinates as [number, number][]);
+      }
     } catch (e) {
-      setSafeRouteLine(null);
-      setRouteError(e instanceof Error ? e.message : "Could not compute route");
+      setSafeRouteData(null);
+      if (e instanceof Error && e.message === "__UNROUTABLE__") {
+        setToastMessage(SAFENET_UNROUTABLE_ERROR);
+        setRouteError(null);
+        return;
+      }
+      const aborted =
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "TimeoutError") ||
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
+        (e instanceof Error && e.name === "AbortError");
+      if (aborted) {
+        setRouteError(
+          "Route request timed out (55s). Try again, set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client for instant local routing, or check the Python router logs (OSM download can be slow)."
+        );
+        return;
+      }
+      const raw = e instanceof Error ? e.message : "";
+      if (/no path|not found|404/i.test(raw)) {
+        setToastMessage(SAFENET_UNROUTABLE_ERROR);
+        setRouteError(null);
+        return;
+      }
+      setRouteError(raw || "Could not compute route");
     } finally {
       setRouteLoading(false);
+      setRouteLoadingPhase(null);
     }
-  }, [gpsPin, droppedPin, routingIncidents]);
+  }, [userCoords, mapCenter, selectedDestination, routingIncidents, directionsMode, routeStartCustom]);
 
-  const clearSafeRoute = useCallback(() => {
-    setSafeRouteLine(null);
+  const closeDestinationCard = useCallback(() => {
+    setSelectedDestination(null);
+    setSafeRouteData(null);
     setRouteError(null);
+    setRouteInfo(null);
+    setRouteLoadingPhase(null);
+    setDirectionsMode(false);
+    setRouteStartCustom(null);
   }, []);
 
-  const setRouteStartFromGps = useCallback((lat: number, lng: number) => {
-    setGpsPin({ latitude: lat, longitude: lng });
-  }, []);
-
-  const setRouteStartFromMapCenter = useCallback(() => {
-    const c = mapCenter ?? {
-      latitude: MELBOURNE_CENTER.latitude,
-      longitude: MELBOURNE_CENTER.longitude,
-      zoom: MELBOURNE_CENTER.zoom,
-    };
-    setGpsPin({ latitude: c.latitude, longitude: c.longitude });
-  }, [mapCenter]);
-
-  const setRouteStartManual = useCallback((lat: number, lng: number) => {
-    setGpsPin({ latitude: lat, longitude: lng });
-  }, []);
-
-  const clearRouteStart = useCallback(() => {
-    setGpsPin(null);
-  }, []);
-
-  const setRouteEndFromGps = useCallback((lat: number, lng: number) => {
-    setDroppedPin({ latitude: lat, longitude: lng });
-    setDropPinMode(false);
-  }, []);
-
-  const setRouteEndFromMapCenter = useCallback(() => {
-    const c = mapCenter ?? {
-      latitude: MELBOURNE_CENTER.latitude,
-      longitude: MELBOURNE_CENTER.longitude,
-      zoom: MELBOURNE_CENTER.zoom,
-    };
-    setDroppedPin({ latitude: c.latitude, longitude: c.longitude });
-    setDropPinMode(false);
-  }, [mapCenter]);
-
-  const setRouteEndManual = useCallback((lat: number, lng: number) => {
-    setDroppedPin({ latitude: lat, longitude: lng });
-    setDropPinMode(false);
-  }, []);
-
-  const clearRouteEnd = useCallback(() => {
-    setDroppedPin(null);
-  }, []);
-
-  useEffect(() => {
-    setSafeRouteLine(null);
+  const endContextualRoute = useCallback(() => {
+    setSafeRouteData(null);
+    setSelectedDestination(null);
     setRouteError(null);
-  }, [gpsPin?.latitude, gpsPin?.longitude, droppedPin?.latitude, droppedPin?.longitude]);
+    setRouteInfo(null);
+    setRouteLoadingPhase(null);
+    setRouteStartCustom(null);
+  }, []);
+
+  const closeDirectionsPlanner = useCallback(() => {
+    setDirectionsMode(false);
+    setRouteStartCustom(null);
+    setRouteError(null);
+    setRouteInfo(null);
+  }, []);
 
   function activeMapPoints(): MapIncidentPoint[] {
     if (activeIncidentTab === "user-reported") return [];
@@ -359,8 +502,25 @@ export default function Dashboard() {
     return supabaseMapPoints;
   }
 
+  const contextualDestinationMarker = useMemo(() => {
+    if (!selectedDestination) return null;
+    const [lng, lat] = selectedDestination.coordinates;
+    return { name: selectedDestination.name, lng, lat };
+  }, [selectedDestination]);
+
+  const contextualOriginMarker = useMemo(() => {
+    if (!directionsMode || !routeStartCustom) return null;
+    const [lng, lat] = routeStartCustom.coordinates;
+    return { name: routeStartCustom.name, lng, lat };
+  }, [directionsMode, routeStartCustom]);
+
+  const hasContextualRoute =
+    Array.isArray(safeRouteData) && safeRouteData.length >= 2;
+
   return (
     <main className="relative h-screen w-screen overflow-hidden">
+      <RouteToast message={toastMessage} variant="error" onDismiss={dismissToast} />
+
       <div className="absolute inset-0 z-0">
         <RadiantMap
           onFlyTo={flyTarget}
@@ -374,31 +534,44 @@ export default function Dashboard() {
           sosAlerts={sosMapAlerts}
           friendLocations={friendLocations}
           activeRoute={activeRoute}
-          safeRouteLine={safeRouteLine}
+          contextualDestination={contextualDestinationMarker}
+          contextualOrigin={contextualOriginMarker}
+          contextualRouteCoordinates={safeRouteData}
         />
       </div>
 
-      <SafeRoutePanel
-        hasStart={!!gpsPin}
-        hasEnd={!!droppedPin}
-        canCompute={!!gpsPin && !!droppedPin}
-        mapCenterReady
-        dropPinMode={dropPinMode}
-        loading={routeLoading}
-        error={routeError}
-        route={safeRouteLine}
-        onSetStartFromGps={setRouteStartFromGps}
-        onSetStartFromMapCenter={setRouteStartFromMapCenter}
-        onSetStartManual={setRouteStartManual}
-        onClearStart={clearRouteStart}
-        onSetEndFromGps={setRouteEndFromGps}
-        onSetEndFromMapCenter={setRouteEndFromMapCenter}
-        onSetEndManual={setRouteEndManual}
-        onClearEnd={clearRouteEnd}
-        onTogglePickEndOnMap={togglePickEndOnMap}
-        onCompute={fetchSafeRoute}
-        onClear={clearSafeRoute}
-      />
+      {directionsMode && (
+        <RoutePlannerPanel
+          mapCenter={mapCenter}
+          hasUserLocation={Boolean(userCoords)}
+          hasActiveRoute={hasContextualRoute}
+          onEndRoute={endContextualRoute}
+          routeStartCustom={routeStartCustom}
+          onRouteStartCustomChange={setRouteStartCustom}
+          routeEnd={selectedDestination}
+          onRouteEndChange={setSelectedDestination}
+          routeLoading={routeLoading}
+          routeLoadingPhase={routeLoadingPhase}
+          routeError={routeError}
+          routeInfo={routeInfo}
+          onGetSafeRoute={requestContextualSafeRoute}
+          onClose={closeDirectionsPlanner}
+        />
+      )}
+
+      {!directionsMode && (
+        <ContextualDirectionsCards
+          selectedDestination={selectedDestination}
+          hasActiveRoute={hasContextualRoute}
+          routeLoading={routeLoading}
+          routeLoadingPhase={routeLoadingPhase}
+          routeError={routeError}
+          routeInfo={routeInfo}
+          onGetSafeRoute={requestContextualSafeRoute}
+          onCloseDestination={closeDestinationCard}
+          onEndRoute={endContextualRoute}
+        />
+      )}
 
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
@@ -415,9 +588,8 @@ export default function Dashboard() {
           />
         </div>
 
-        <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
+        <div className="pointer-events-auto absolute right-0 top-[92px] z-40 sm:right-1">
           <AreaIncidentSummary
-            className="pointer-events-auto"
             center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
             vicpolItems={vicpolItems}
             supabaseItems={supabaseItems}
@@ -435,6 +607,13 @@ export default function Dashboard() {
           onLoginClick={() => {}}
           onSignupClick={() => {}}
           onLogout={handleLogout}
+          directionsMode={directionsMode}
+          onDirectionsModeChange={(active) => {
+            setDirectionsMode(active);
+            if (!active) setRouteStartCustom(null);
+            setRouteError(null);
+            setRouteInfo(null);
+          }}
         />
 
         {/* Bottom crime-news sheet (no left-side toggle) */}

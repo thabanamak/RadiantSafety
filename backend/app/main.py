@@ -1,13 +1,15 @@
 """
-FastAPI backend: generates many Mapbox Directions candidates (direct O→D alternatives
-plus detour routes through offset waypoints on each side of the heat), ranks them
-by heat exposure (peak → mean → distance), and picks the coolest. Falls back to
-grid A* only when Mapbox is unavailable or every candidate crosses hard hazards.
+FastAPI backend: route order — (1) OSM walk-network A*, (2) Mapbox walking Directions,
+(3) heat-aware grid A* last resort. OSM edges follow real footpaths; Mapbox follows
+roads/paths; the grid can cut across blocks and is only a fallback.
 """
 
 from __future__ import annotations
 
 import math
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -30,6 +32,12 @@ from app.engine.pathfinding import (
     path_mean_heat,
     path_peak_heat,
 )
+from app.engine.road_network_astar import road_network_astar_route
+
+logger = logging.getLogger(__name__)
+
+# OSMnx / Overpass can hang a long time on first bbox; cap wait so we fall back to grid A*.
+_ROAD_ASTAR_TIMEOUT_SEC = 22.0
 
 # Load tokens from RadiantSafety/.env.local when uvicorn runs from backend/
 _env_root = Path(__file__).resolve().parent.parent.parent
@@ -225,6 +233,9 @@ def _try_mapbox_alternatives(
     2. Generate detour candidates: O → offset_waypoint → D for many perpendicular
        offsets around the heat zone. Mapbox snaps each waypoint to a real road.
     3. Score all candidates by (peak_heat, mean_heat, distance) and return the coolest.
+
+    Detour Mapbox calls run in parallel — previously they were sequential (~15+ HTTP
+    round-trips), which made routing feel very slow.
     """
     token = mapbox_access_token()
     if not token:
@@ -248,18 +259,34 @@ def _try_mapbox_alternatives(
     if mb_direct:
         candidates.extend(mb_direct)
 
-    # --- 2. Detour routes through offset waypoints (only when there's heat to avoid) ---
+    # --- 2. Detour routes (parallel): each was ~1 HTTP; serial sum dominated latency ---
     if has_heat:
         detour_wps = _generate_detour_waypoints(o_lat, o_lon, d_lat, d_lon, heats)
-        for wp_lat, wp_lon in detour_wps:
-            mb_detour = fetch_mapbox_routes(
+        # Cap probes so we do not hammer Mapbox; spread across generated set
+        max_detours = 10
+        if len(detour_wps) > max_detours:
+            step = (len(detour_wps) - 1) / float(max_detours - 1)
+            detour_wps = [detour_wps[int(round(i * step))] for i in range(max_detours)]
+
+        def _one_detour(wp: Tuple[float, float]) -> Optional[List[Tuple[List[Tuple[float, float]], float, float]]]:
+            wp_lat, wp_lon = wp
+            return fetch_mapbox_routes(
                 [(o_lat, o_lon), (wp_lat, wp_lon), (d_lat, d_lon)],
                 token,
                 profile=profile,
                 alternatives=False,
             )
-            if mb_detour:
-                candidates.extend(mb_detour)
+
+        workers = min(8, max(1, len(detour_wps)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_one_detour, wp) for wp in detour_wps]
+            for fut in as_completed(futures):
+                try:
+                    mb_detour = fut.result()
+                    if mb_detour:
+                        candidates.extend(mb_detour)
+                except Exception:
+                    continue
 
     if not candidates:
         return None
@@ -299,14 +326,61 @@ def compute_route(body: RouteRequest) -> RouteResponse:
     path: Optional[List[Tuple[float, float]]] = None
     dist: float = 0.0
     dur: float = 0.0
-    algorithm = "astar-heat-weighted"
+    algorithm = "astar-osm-walk"
 
-    mb = _try_mapbox_alternatives(body, hard, heats)
-    if mb is not None:
-        path, dist, dur, algorithm = mb
+    # 1) A* on OSM pedestrian graph — edges are real walkable ways, not free-space grid
+    # Daemon thread + join(timeout): after timeout we still return and fall back to grid/Mapbox
+    # without blocking the next HTTP request (unlike a single-slot process pool).
+    _osm_out: List[Optional[List[Tuple[float, float]]]] = [None]
+    _osm_exc: List[Optional[BaseException]] = [None]
+
+    def _osm_worker() -> None:
+        try:
+            _osm_out[0] = road_network_astar_route(
+                body.origin.latitude,
+                body.origin.longitude,
+                body.destination.latitude,
+                body.destination.longitude,
+                hard,
+                heats,
+                heat_penalty=body.heat_penalty,
+                bbox_pad_m=body.padding_meters,
+            )
+        except Exception as ex:
+            _osm_exc[0] = ex
+            _osm_out[0] = None
+
+    _th = threading.Thread(target=_osm_worker, name="osm_astar", daemon=True)
+    _th.start()
+    _th.join(timeout=_ROAD_ASTAR_TIMEOUT_SEC)
+    if _th.is_alive():
+        logger.warning(
+            "OSM walk A* timed out after %.0fs — falling back to Mapbox / grid",
+            _ROAD_ASTAR_TIMEOUT_SEC,
+        )
+        path = None
+    elif _osm_exc[0] is not None:
+        logger.warning("OSM walk A* failed: %s — falling back to Mapbox / grid", _osm_exc[0])
+        path = None
+    else:
+        path = _osm_out[0]
+
+    if path is not None:
+        dist = _path_length_m(path)
         if math.isnan(dist) or math.isinf(dist) or dist <= 0:
-            dist = _path_length_m(path)
+            dist = 0.0
+        dur = dist / 1.39 if dist > 0 else 0.0
+        algorithm = "astar-osm-walk"
 
+    # 2) Mapbox walking — follows real roads / paths (heat-ranked detours). Prefer this over grid.
+    if path is None:
+        mb = _try_mapbox_alternatives(body, hard, heats)
+        if mb is not None:
+            path, dist, dur, algorithm = mb
+            if math.isnan(dist) or math.isinf(dist) or dist <= 0:
+                dist = _path_length_m(path)
+
+    # 3) Grid A* — last resort only (cuts across blocks; not real pedestrian geometry)
     if path is None:
         path = astar_route(
             body.origin.latitude,
@@ -319,26 +393,27 @@ def compute_route(body: RouteRequest) -> RouteResponse:
             padding_m=body.padding_meters,
             heat_penalty=body.heat_penalty,
         )
-        algorithm = "astar-heat-weighted"
-        if path is None:
-            token_ok = bool(mapbox_access_token())
-            if not token_ok:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "No route: set MAPBOX_ACCESS_TOKEN or NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN "
-                        "for Mapbox Directions, or relax hazard zones for grid fallback."
-                    ),
-                )
+        algorithm = "astar-grid-heat"
+        if path is not None:
+            dist = _path_length_m(path)
+            if math.isnan(dist) or math.isinf(dist):
+                dist = 0.0
+            dur = dist / 1.39 if dist > 0 else 0.0
+
+    if path is None:
+        token_ok = bool(mapbox_access_token())
+        if not token_ok:
             raise HTTPException(
-                status_code=404,
-                detail="No path found: expand padding, lower resolution, or shrink hard hazard zones.",
+                status_code=503,
+                detail=(
+                    "No route: set MAPBOX_ACCESS_TOKEN for Mapbox walking paths, install osmnx+networkx+scikit-learn "
+                    "for OSM footpaths, or relax padding / hazards."
+                ),
             )
-        dist = _path_length_m(path)
-        if math.isnan(dist) or math.isinf(dist):
-            dist = 0.0
-        # Estimate walking duration for A* fallback (~5 km/h)
-        dur = dist / 1.39 if dist > 0 else 0.0
+        raise HTTPException(
+            status_code=404,
+            detail="No path found: try a shorter trip, expand padding, or lower grid resolution.",
+        )
 
     waypoints = [LatLon(latitude=lat, longitude=lon) for lat, lon in path]
     mean_h = path_mean_heat(path, heats) if heats else 0.0

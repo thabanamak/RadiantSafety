@@ -21,19 +21,36 @@ export function explainGeoError(err: GeolocationPositionError | Error): string {
   return err.message || "Could not get location.";
 }
 
+export type GeolocationMode = "full" | "routing";
+
 /**
  * Try precise fix first, then faster / cached reading.
+ *
+ * - `full` (default): up to ~65s total — best for “drop pin at my feet” flows.
+ * - `routing`: favours cached / network fixes first, caps ~14s — avoids blocking
+ *   “Get safe route” on long GPS timeouts indoors.
  */
-export async function getCurrentPositionBestEffort(): Promise<Wgs84Point> {
+export async function getCurrentPositionBestEffort(
+  options?: { mode?: GeolocationMode }
+): Promise<Wgs84Point> {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
     throw new Error("Geolocation is not supported in this browser.");
   }
 
-  const attempts: PositionOptions[] = [
-    { enableHighAccuracy: true, timeout: 28_000, maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 22_000, maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 15_000, maximumAge: 120_000 },
-  ];
+  const mode: GeolocationMode = options?.mode ?? "full";
+
+  const attempts: PositionOptions[] =
+    mode === "routing"
+      ? [
+          { enableHighAccuracy: false, timeout: 4_000, maximumAge: 300_000 },
+          { enableHighAccuracy: false, timeout: 5_000, maximumAge: 60_000 },
+          { enableHighAccuracy: false, timeout: 5_000, maximumAge: 0 },
+        ]
+      : [
+          { enableHighAccuracy: true, timeout: 28_000, maximumAge: 0 },
+          { enableHighAccuracy: false, timeout: 22_000, maximumAge: 0 },
+          { enableHighAccuracy: false, timeout: 15_000, maximumAge: 120_000 },
+        ];
 
   let lastError: GeolocationPositionError | Error | null = null;
 

@@ -34,6 +34,26 @@ export function useUserLocation(): UserLocationState {
       return;
     }
 
+    // Prime coords quickly: watchPosition can delay the first fix; getCurrentPosition
+    // usually returns sooner after the user allows location.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setState({
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          },
+          error: null,
+          permission: "granted",
+        });
+      },
+      () => {
+        /* watch below will still try; avoid flipping to denied on first-shot timeout */
+      },
+      { enableHighAccuracy: false, timeout: 12_000, maximumAge: 60_000 }
+    );
+
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         setState({
@@ -47,7 +67,11 @@ export function useUserLocation(): UserLocationState {
         });
       },
       (err) => {
-        setState({ coords: null, error: err.message, permission: "denied" });
+        setState((prev) => ({
+          coords: prev.coords,
+          error: err.message,
+          permission: err.code === GeolocationPositionError.PERMISSION_DENIED ? "denied" : prev.permission,
+        }));
       },
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 }
     );

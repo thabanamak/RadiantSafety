@@ -19,6 +19,7 @@ env/
 
 # --- NODE / NEXT.JS ---
 node_modules/
+tsconfig.tsbuildinfo
 .next/
 out/
 npm-debug.log*

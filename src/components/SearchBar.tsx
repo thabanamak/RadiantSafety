@@ -16,7 +16,14 @@ interface GeocodingFeature {
 
 interface SearchBarProps {
   mapCenter?: { latitude: number; longitude: number } | null;
-  onSelectArea: (coords: { latitude: number; longitude: number; zoom: number }) => void;
+  onSelectArea: (payload: {
+    latitude: number;
+    longitude: number;
+    zoom: number;
+    placeName: string;
+    /** Mapbox center [lng, lat] */
+    center: [number, number];
+  }) => void;
 }
 
 function highlightMatch(text: string, query: string) {
@@ -108,17 +115,26 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleSelect = useCallback((feature: GeocodingFeature) => {
-    onSelectArea({
-      longitude: feature.center[0],
-      latitude: feature.center[1],
-      zoom: 15,
-    });
+  const closeDropdown = useCallback(() => {
     setQuery("");
     setResults([]);
     setIsFocused(false);
     setActiveIndex(-1);
-  }, [onSelectArea]);
+  }, []);
+
+  const handleSelect = useCallback(
+    (feature: GeocodingFeature) => {
+      onSelectArea({
+        longitude: feature.center[0],
+        latitude: feature.center[1],
+        zoom: 15,
+        placeName: feature.place_name,
+        center: feature.center,
+      });
+      closeDropdown();
+    },
+    [onSelectArea, closeDropdown]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!showDropdown) return;
@@ -197,6 +213,7 @@ export default function SearchBar({ mapCenter, onSelectArea }: SearchBarProps) {
               {results.map((feature, i) => (
                 <button
                   key={feature.id}
+                  type="button"
                   onClick={() => handleSelect(feature)}
                   className={cn(
                     "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
