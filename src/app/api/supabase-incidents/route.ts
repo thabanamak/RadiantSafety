@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export interface SupabaseIncident {
   id: string;
@@ -24,7 +24,7 @@ export async function GET() {
     const MAX_ROWS = 20000;
 
     while (items.length < MAX_ROWS) {
-      const { data, error } = await supabase
+      const { data, error } = await getSupabase()
         .from("incidents")
         .select("id, title, suburb, location_lat, location_lng, intensity, source, is_verified")
         .not("location_lat", "is", null)

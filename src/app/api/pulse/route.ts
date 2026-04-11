@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
     }
 
-    const { error } = await supabase.from("user_pulse").upsert(
+    const { error } = await getSupabase().from("user_pulse").upsert(
       {
         user_id,
         last_seen: new Date().toISOString(),

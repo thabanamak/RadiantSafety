@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { error } = await supabase.from("friend_locations").upsert(
+    const { error } = await getSupabase().from("friend_locations").upsert(
       {
         room_code: room_code.toUpperCase(),
         device_id,

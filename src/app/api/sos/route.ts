@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export interface SOSIncident {
   id: string;
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "lat and lng are required" }, { status: 400 });
     }
 
-    const { data, error } = await supabase.rpc("nearby_incidents", {
+    const { data, error } = await getSupabase().rpc("nearby_incidents", {
       lat,
       lng,
       radius_meters: Math.min(radius, 5000), // hard cap at 5 km

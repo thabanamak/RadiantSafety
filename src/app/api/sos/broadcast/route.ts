@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid issue type" }, { status: 400 });
     }
 
-    const { error } = await supabase.from("sos_alerts").insert({
+    const { error } = await getSupabase().from("sos_alerts").insert({
       user_id,
       issue,
       location: `POINT(${lng} ${lat})`,

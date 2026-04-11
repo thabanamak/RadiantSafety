@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Only the original sender can resolve their own alert
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("sos_alerts")
       .update({
         resolved_at: new Date().toISOString(),
