@@ -12,12 +12,15 @@ import {
   UserCircle,
   ClipboardList,
   Settings,
+  Shield,
+  Hospital,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
 import type { UserReputation } from "@/lib/types";
 import type { AuthUser } from "@/lib/auth-storage";
 import SearchBar from "./SearchBar";
+import MapVisibilitySwitch from "@/components/MapVisibilitySwitch";
 
 export type { AuthUser };
 
@@ -41,6 +44,10 @@ interface TopNavProps {
   onViewPastReports: () => void;
   directionsMode?: boolean;
   onDirectionsModeChange?: (active: boolean) => void;
+  showPoliceOnMap: boolean;
+  onShowPoliceOnMapChange: (next: boolean) => void;
+  showHealthFacilitiesOnMap: boolean;
+  onShowHealthFacilitiesOnMapChange: (next: boolean) => void;
 }
 
 export default function TopNav({
@@ -54,6 +61,10 @@ export default function TopNav({
   onViewPastReports,
   directionsMode = false,
   onDirectionsModeChange,
+  showPoliceOnMap,
+  onShowPoliceOnMapChange,
+  showHealthFacilitiesOnMap,
+  onShowHealthFacilitiesOnMapChange,
 }: TopNavProps) {
   return (
     <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
@@ -113,7 +124,41 @@ export default function TopNav({
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-3 px-5">
-        <SearchBar mapCenter={mapCenter} onSelectArea={onSearchSelectArea} />
+        <div className="flex w-full max-w-2xl flex-col gap-1.5">
+          <SearchBar mapCenter={mapCenter} onSelectArea={onSearchSelectArea} />
+          <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2 sm:gap-x-6">
+            <div className="flex items-center gap-2">
+              <Shield className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                Police
+              </span>
+              <MapVisibilitySwitch
+                id="toggle-police-map"
+                on={showPoliceOnMap}
+                onToggle={() => onShowPoliceOnMapChange(!showPoliceOnMap)}
+                activeClass="bg-sky-600 focus-visible:ring-sky-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Hospital
+                className="h-3.5 w-3.5 shrink-0 text-red-400"
+                strokeWidth={2.25}
+                aria-hidden
+              />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                Medical
+              </span>
+              <MapVisibilitySwitch
+                id="toggle-medical-map"
+                on={showHealthFacilitiesOnMap}
+                onToggle={() =>
+                  onShowHealthFacilitiesOnMapChange(!showHealthFacilitiesOnMap)
+                }
+                activeClass="bg-red-600 focus-visible:ring-red-500"
+              />
+            </div>
+          </div>
+        </div>
 
         {onDirectionsModeChange && (
           <button

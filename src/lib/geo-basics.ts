@@ -15,7 +15,7 @@ export function haversineMeters(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Initial bearing from (lat1,lng1) to (lat2,lng2), degrees clockwise from north [0,360). */
+/** Initial bearing from (lat1,lng1) to (lat2,lng2), degrees clockwise from north [0, 360). */
 export function initialBearingDegrees(
   lat1: number,
   lng1: number,

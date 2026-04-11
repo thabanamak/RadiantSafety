@@ -1,6 +1,6 @@
 /**
- * Major Victoria Police stations (approximate entrance coordinates for map use).
- * Source: public station addresses / mapping data; verify for operational use.
+ * Major Victoria Police stations (approximate map coordinates for planning).
+ * Verify addresses for operational use.
  */
 export interface PoliceStation {
   id: string;
@@ -18,7 +18,7 @@ export const VIC_POLICE_STATIONS: PoliceStation[] = [
   { id: "fitzroy", name: "Fitzroy Police Station", suburb: "Fitzroy", latitude: -37.8065, longitude: 144.9786 },
   { id: "richmond", name: "Richmond Police Station", suburb: "Richmond", latitude: -37.8185, longitude: 145.0014 },
   { id: "south-yarra", name: "South Yarra Police Station", suburb: "South Yarra", latitude: -37.8388, longitude: 144.9917 },
-  { id: "prahan", name: "Prahran Police Station", suburb: "Prahran", latitude: -37.8504, longitude: 144.9939 },
+  { id: "prahran", name: "Prahran Police Station", suburb: "Prahran", latitude: -37.8504, longitude: 144.9939 },
   { id: "st-kilda", name: "St Kilda Police Station", suburb: "St Kilda", latitude: -37.8677, longitude: 144.9809 },
   { id: "port-melbourne", name: "Port Melbourne Police", suburb: "Port Melbourne", latitude: -37.8403, longitude: 144.9429 },
   { id: "footscray", name: "Footscray Police Station", suburb: "Footscray", latitude: -37.7996, longitude: 144.8998 },

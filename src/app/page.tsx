@@ -65,6 +65,8 @@ import SafeWalkTimer from "@/components/SafeWalkTimer";
 import HotspotNudge from "@/components/HotspotNudge";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
+import { VIC_HEALTH_FACILITIES } from "@/lib/vic-health-facilities";
+import { VIC_POLICE_STATIONS } from "@/lib/vic-police-stations";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
@@ -252,6 +254,9 @@ export default function Dashboard() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const dismissToast = useCallback(() => setToastMessage(null), []);
+
+  const [showPoliceOnMap, setShowPoliceOnMap] = useState(true);
+  const [showHealthFacilitiesOnMap, setShowHealthFacilitiesOnMap] = useState(true);
 
   useEffect(() => {
     if (pathname === "/") {
@@ -914,6 +919,8 @@ export default function Dashboard() {
           contextualDestination={contextualDestinationMarker}
           contextualOrigin={contextualOriginMarker}
           contextualRouteCoordinates={safeRouteData}
+          policeStations={showPoliceOnMap ? VIC_POLICE_STATIONS : []}
+          healthFacilities={showHealthFacilitiesOnMap ? VIC_HEALTH_FACILITIES : []}
         />
       </div>
 
@@ -994,6 +1001,10 @@ export default function Dashboard() {
             setRouteError(null);
             setRouteInfo(null);
           }}
+          showPoliceOnMap={showPoliceOnMap}
+          onShowPoliceOnMapChange={setShowPoliceOnMap}
+          showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
+          onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
         />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
