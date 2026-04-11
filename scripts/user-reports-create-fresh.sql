@@ -2,6 +2,9 @@
 -- Fresh `public.user_reports` — run in Supabase SQL Editor (replaces old table).
 -- trust = 10 + upvotes - downvotes; trust_label: Trustworthy / Semi-trustworthy /
 -- Medium trust / Untrustworthy; severity from category; delete row if trust < 0.
+--
+-- Official-incident sync (Next.js API) needs SUPABASE_SERVICE_KEY + SUPABASE_IMPORT_USER_ID
+-- in server env — see scripts/user-reports-add-source-key.sql header.
 -- ============================================================================
 
 drop table if exists public.user_reports cascade;
@@ -13,6 +16,8 @@ create table public.user_reports (
   longitude double precision not null,
   description text not null default '',
   image_url text,
+  -- vicpol:… / historical:… for imported official data; null for real user submissions
+  source_key text,
   category text not null,
   upvotes integer not null default 0,
   downvotes integer not null default 0,
@@ -58,6 +63,10 @@ create table public.user_reports (
 
 create index user_reports_location_idx on public.user_reports (latitude, longitude);
 create index user_reports_user_idx on public.user_reports (user_id);
+
+create unique index user_reports_source_key_uidx
+  on public.user_reports (source_key)
+  where source_key is not null;
 
 comment on table public.user_reports is 'Community reports; trust = 10+up−down; severity from category.';
 comment on column public.user_reports.trust is 'Generated; row removed by trigger if < 0.';

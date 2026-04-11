@@ -25,7 +25,11 @@ import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
-import { insertUserReport } from "@/lib/supabase-user-reports";
+import {
+  fetchUserReports,
+  insertUserReport,
+  mergeUserReports,
+} from "@/lib/supabase-user-reports";
 
 interface VicPolIncident {
   id: string;
@@ -78,9 +82,12 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
 
   const [supabaseItems, setSupabaseItems] = useState<SupabaseIncident[]>([]);
+  const [vicpolFetchReady, setVicpolFetchReady] = useState(false);
+  const [supabaseFetchReady, setSupabaseFetchReady] = useState(false);
 
-  /** In-session user submissions (Quick Report); shown under User Reported + search. */
+  /** User-reported incidents: loaded from `user_reports` + any new submissions this session. */
   const [submittedUserReports, setSubmittedUserReports] = useState<UserReport[]>([]);
+  const hasSyncedOfficialToUserReports = useRef(false);
 
   // Location pin state — shared between FAB and map
   const [dropPinMode, setDropPinMode] = useState(false);
@@ -146,6 +153,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
       setVicpolItems([]);
     } finally {
       setVicpolLoading(false);
+      setVicpolFetchReady(true);
     }
   }, [vicpolLoading, vicpolLoaded]);
 
@@ -156,6 +164,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
       setSupabaseItems(Array.isArray(data.items) ? data.items : []);
     } catch {
       setSupabaseItems([]);
+    } finally {
+      setSupabaseFetchReady(true);
     }
   }, []);
 
@@ -165,6 +175,82 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     loadSupabaseIncidents();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Hydrate user-reported incidents from `public.user_reports` (same rows as SQL seed / app inserts).
+  useEffect(() => {
+    let cancelled = false;
+    const client = getSupabaseBrowser();
+    if (!client) return;
+
+    void (async () => {
+      const fromDb = await fetchUserReports(client);
+      if (cancelled) return;
+      setSubmittedUserReports((prev) => mergeUserReports(fromDb, prev));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Append official VicPol + historical Supabase incidents into `user_reports` (deduped by source_key server-side).
+  useEffect(() => {
+    if (!vicpolFetchReady || !supabaseFetchReady) return;
+    if (hasSyncedOfficialToUserReports.current) return;
+    hasSyncedOfficialToUserReports.current = true;
+
+    void (async () => {
+      try {
+        const vicpol = vicpolItems
+          .filter((i) => i.latitude != null && i.longitude != null)
+          .map((i) => ({
+            id: i.id,
+            title: i.title,
+            latitude: i.latitude as number,
+            longitude: i.longitude as number,
+            intensity: i.intensity,
+          }));
+
+        const supabase = supabaseItems.map((i) => ({
+          id: i.id,
+          title: i.title,
+          location_lat: i.location_lat,
+          location_lng: i.location_lng,
+          intensity: i.intensity,
+        }));
+
+        const res = await fetch("/api/sync-active-incidents-to-user-reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vicpol, supabase }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          inserted?: number;
+          total?: number;
+          note?: string;
+        };
+        if (!data.ok) {
+          if (process.env.NODE_ENV === "development") {
+            console.warn(
+              "[RadiantSafety] sync-active-incidents-to-user-reports failed:",
+              data.error ?? `HTTP ${res.status}`,
+              data.note ? `(${data.note})` : ""
+            );
+          }
+          return;
+        }
+
+        const client = getSupabaseBrowser();
+        if (!client) return;
+        const fromDb = await fetchUserReports(client);
+        setSubmittedUserReports((prev) => mergeUserReports(fromDb, prev));
+      } catch {
+        /* sync is best-effort */
+      }
+    })();
+  }, [vicpolFetchReady, supabaseFetchReady, vicpolItems, supabaseItems]);
 
   const vicpolMapPoints: MapIncidentPoint[] = vicpolItems
     .filter((i) => i.latitude != null && i.longitude != null)
@@ -231,7 +317,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         } else {
           console.warn(
             "[RadiantSafety] user_reports insert skipped or failed:",
-            result.error
+            "error" in result ? result.error : "unknown"
           );
         }
       }
@@ -250,7 +336,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
         createdAt: new Date(),
         userId: authUser?.email ?? "anonymous",
       };
-      setSubmittedUserReports((prev) => [report, ...prev]);
+      setSubmittedUserReports((prev) => mergeUserReports([report], prev));
       setActiveIncidentTab("user-reported");
       setFlyTarget({
         latitude: report.latitude,

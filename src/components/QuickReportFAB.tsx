@@ -80,8 +80,12 @@ export default function QuickReportFAB({
   const [imagePickError, setImagePickError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  /** Prevents re-running the drop sync when parent still holds the same coords and locMode stays "drop". */
-  const lastConsumedDropKeyRef = useRef<string | null>(null);
+  /**
+   * Last drop coords we synced to `pinnedLocation`. Cleared when `droppedPin` is null
+   * so a later report at the **same** map point still syncs (otherwise the effect would
+   * bail and the second submit would never persist correctly).
+   */
+  const lastSyncedDropKeyRef = useRef<string | null>(null);
 
   const resetOptionalImage = useCallback(() => {
     setAttachedImageDataUrl(null);
@@ -125,13 +129,13 @@ export default function QuickReportFAB({
   // When the user places a pin on the map, sync coords, exit map drop mode, and reopen the panel on the location step.
   useEffect(() => {
     if (!droppedPin || locMode !== "drop") {
-      if (!droppedPin) lastConsumedDropKeyRef.current = null;
+      if (!droppedPin) lastSyncedDropKeyRef.current = null;
       return;
     }
 
     const dropKey = `${droppedPin.latitude},${droppedPin.longitude}`;
-    if (lastConsumedDropKeyRef.current === dropKey) return;
-    lastConsumedDropKeyRef.current = dropKey;
+    if (lastSyncedDropKeyRef.current === dropKey) return;
+    lastSyncedDropKeyRef.current = dropKey;
 
     const pin: PinLocation = { ...droppedPin, mode: "dropped" };
     setPinnedLocation(pin);
@@ -177,6 +181,7 @@ export default function QuickReportFAB({
   }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
+    lastSyncedDropKeyRef.current = null;
     setPinnedLocation(null);
     onPinLocation?.(null);
     setLocMode("drop");
@@ -186,6 +191,7 @@ export default function QuickReportFAB({
   }, [onDropPinMode, onPinLocation]);
 
   const handleClearPin = useCallback(() => {
+    lastSyncedDropKeyRef.current = null;
     setPinnedLocation(null);
     setLocMode("none");
     setDropPinActive(false);
@@ -195,6 +201,7 @@ export default function QuickReportFAB({
 
   const handleSubmit = async () => {
     if (!selected || !pinnedLocation) return;
+    lastSyncedDropKeyRef.current = null;
     setSubmitted(true);
     try {
       await onReportSubmitted?.({
@@ -205,6 +212,7 @@ export default function QuickReportFAB({
       });
     } finally {
       setTimeout(() => {
+        lastSyncedDropKeyRef.current = null;
         setIsOpen(false);
         setSubmitted(false);
         setSelected(null);
