@@ -54,7 +54,12 @@ export async function syncProfileFromAuthUser(
       : DEFAULT_REPUTATION_SCORE;
 
   if (!row || typeof row.reputation !== "number") {
-    return { ...supabaseUserToAuthUser(user), name, reputationScore: rep };
+    return {
+      ...supabaseUserToAuthUser(user),
+      name,
+      reputationScore: rep,
+      over18Verified: true,
+    };
   }
 
   return {
@@ -62,5 +67,6 @@ export async function syncProfileFromAuthUser(
     name,
     email,
     reputationScore: rep,
+    over18Verified: true,
   };
 }

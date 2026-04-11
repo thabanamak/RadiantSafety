@@ -20,7 +20,7 @@ import QuickReportFAB, {
   type PinLocation,
   type SubmittedReportPayload,
 } from "@/components/QuickReportFAB";
-import AuthModal from "@/components/AuthModal";
+import ReporterProfileModal from "@/components/ReporterProfileModal";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isEmailLinkCallback } from "@/lib/auth-callback-url";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
@@ -63,7 +63,6 @@ import SOSController from "@/features/sos/SOSController";
 import IncomingSOSBanner, { type IncomingSOS } from "@/components/IncomingSOSBanner";
 import SafeWalkTimer from "@/components/SafeWalkTimer";
 import HotspotNudge from "@/components/HotspotNudge";
-import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
 import { useUserLocation } from "@/hooks/useUserLocation";
@@ -157,6 +156,15 @@ export default function Dashboard() {
 
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [reporterProfile, setReporterProfile] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  const canSubmitReports = Boolean(
+    authUser?.id && authUser.over18Verified !== false
+  );
+
   const [vicpolLoaded, setVicpolLoaded] = useState(false);
   const [vicpolLoading, setVicpolLoading] = useState(false);
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
@@ -199,7 +207,9 @@ export default function Dashboard() {
   const [incomingSOS, setIncomingSOS] = useState<IncomingSOS | null>(null);
 
   useEffect(() => {
-    const channel = getSupabaseBrowser()
+    const { client } = getSupabaseBrowserClient();
+    if (!client) return;
+    const channel = client
       .channel("public:active_sos")
       .on(
         "postgres_changes",
@@ -220,7 +230,9 @@ export default function Dashboard() {
       )
       .subscribe();
 
-    return () => { getSupabaseBrowser().removeChannel(channel); };
+    return () => {
+      client.removeChannel(channel);
+    };
   }, []);
 
   // Find My — friend locations for the map; populated by FindMyController
@@ -424,12 +436,20 @@ export default function Dashboard() {
 
   const handleReportSubmitted = useCallback(
     async (payload: SubmittedReportPayload) => {
+      if (!authUser?.id) {
+        router.push("/login");
+        return;
+      }
+      if (authUser.over18Verified === false) {
+        router.push("/signup");
+        return;
+      }
       let id =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `report-${Date.now()}`;
 
-      const client = getSupabaseBrowser();
+      const { client } = getSupabaseBrowserClient();
       if (client) {
         const result = await insertUserReport(client, {
           category: payload.category,
@@ -443,11 +463,13 @@ export default function Dashboard() {
         } else {
           console.warn(
             "[RadiantSafety] user_reports insert skipped or failed:",
-            result.error
+            "error" in result ? result.error : ""
           );
         }
       }
 
+      const rid = authUser.id ?? authUser.email;
+      const rname = authUser.name;
       const report: UserReport = {
         id,
         latitude: payload.location.latitude,
@@ -460,7 +482,9 @@ export default function Dashboard() {
         upvotes: 0,
         downvotes: 0,
         createdAt: new Date(),
-        userId: authUser?.email ?? "anonymous",
+        userId: rid,
+        reporterId: rid,
+        reporterDisplayName: rname,
       };
       setSubmittedUserReports((prev) => [report, ...prev]);
       setActiveIncidentTab("user-reported");
@@ -470,8 +494,12 @@ export default function Dashboard() {
         zoom: 16,
       });
     },
-    [authUser]
+    [authUser, router]
   );
+
+  const handleDeleteReport = useCallback((reportId: string) => {
+    setSubmittedUserReports((prev) => prev.filter((r) => r.id !== reportId));
+  }, []);
 
   const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
     id: r.id,
@@ -984,17 +1012,22 @@ export default function Dashboard() {
             onViewMap={(coords) => setFlyTarget(coords)}
           />
         ) : (
-          <IncidentFeed
-            reports={submittedUserReports}
-            onViewMap={handleViewMap}
-            reserveTopPx={220}
-            collapsedLabel={
-              submittedUserReports.length > 0
-                ? `User reports (${submittedUserReports.length})`
-                : "User reports"
-            }
-            sheetTitle="User-reported incidents"
-          />
+          <div id="user-reported-panel" className="pointer-events-auto">
+            <IncidentFeed
+              reports={submittedUserReports}
+              onViewMap={handleViewMap}
+              onOpenReporterProfile={(id, name) => setReporterProfile({ id, name })}
+              currentUserId={authUser?.id ?? null}
+              onDeleteReport={handleDeleteReport}
+              reserveTopPx={220}
+              collapsedLabel={
+                submittedUserReports.length > 0
+                  ? `User reports (${submittedUserReports.length})`
+                  : "User reports"
+              }
+              sheetTitle="User-reported incidents"
+            />
+          </div>
         )}
 
         {/* User Reported empty state — only when nothing submitted this session */}
@@ -1004,7 +1037,7 @@ export default function Dashboard() {
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
               <p className="text-xs text-gray-500">
-                Use the red quick-report button and set a location to add one.
+                Sign up with an 18+ verified account, then use the quick-report button to add one.
               </p>
             </div>
           </div>
@@ -1018,6 +1051,8 @@ export default function Dashboard() {
         onReportSubmitted={handleReportSubmitted}
         onSOSPress={() => setShowSOSSheet(true)}
         onSafeWalkPress={() => setShowSafeWalk(true)}
+        reportingAllowed={canSubmitReports}
+        onRequireReportingAuth={() => router.push("/signup")}
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
@@ -1092,6 +1127,20 @@ export default function Dashboard() {
         </div>
       )}
 
+      <ReporterProfileModal
+        open={reporterProfile != null}
+        onClose={() => setReporterProfile(null)}
+        reporterId={reporterProfile?.id ?? ""}
+        reporterDisplayName={reporterProfile?.name ?? ""}
+        reports={submittedUserReports.filter(
+          (r) =>
+            `${r.reporterId ?? r.userId ?? ""}`.trim().toLowerCase() ===
+            (reporterProfile?.id ?? "").trim().toLowerCase()
+        )}
+        onViewMap={handleViewMap}
+        currentUserId={authUser?.id ?? null}
+        onDeleteReport={handleDeleteReport}
+      />
     </main>
   );
 }

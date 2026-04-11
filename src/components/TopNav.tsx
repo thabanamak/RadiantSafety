@@ -57,7 +57,7 @@ export default function TopNav({
 }: TopNavProps) {
   return (
     <nav className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
-      <div className="flex items-center gap-4 px-5 py-3">
+      <div className="relative z-50 flex items-center gap-4 px-5 py-3">
         <div className="flex shrink-0 items-center gap-3">
           {user && (
             <>
@@ -112,7 +112,7 @@ export default function TopNav({
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-3 px-5">
+      <div className="relative z-10 flex flex-col items-center gap-3 px-5">
         <SearchBar mapCenter={mapCenter} onSelectArea={onSearchSelectArea} />
 
         {onDirectionsModeChange && (
@@ -204,6 +204,14 @@ function AccountDropdown({
         <span className="flex h-8 w-8 items-center justify-center rounded-full bg-radiant-red/15 text-radiant-red">
           <UserCircle className="h-5 w-5" strokeWidth={1.75} />
         </span>
+        <span className="hidden items-center gap-2 text-xs font-medium text-gray-300 lg:flex">
+          {user.name}
+          {user.over18Verified && (
+            <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-400">
+              18+ verified
+            </span>
+          )}
+        </span>
         <ChevronDown
           className={cn(
             "hidden h-3.5 w-3.5 text-gray-500 transition-transform sm:block",
@@ -215,11 +223,16 @@ function AccountDropdown({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full mt-2 w-60 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl"
+          className="absolute right-0 top-full z-[60] mt-2 w-60 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl"
         >
           <div className="px-3 py-2">
             <p className="text-xs font-semibold text-gray-200">{user.name}</p>
             <p className="truncate text-[11px] text-gray-500">{user.email}</p>
+            {user.over18Verified && (
+              <p className="mt-1.5 text-[10px] font-medium text-emerald-400/90">
+                ✓ Eligible to file incident reports
+              </p>
+            )}
           </div>
 
           <div className="mx-2 mb-2 rounded-lg border border-radiant-border bg-radiant-card/80 px-3 py-2">

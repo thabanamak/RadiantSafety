@@ -5,6 +5,11 @@ export interface AuthUser {
   email: string;
   /** Reputation from `profiles.reputation` (default 50). */
   reputationScore?: number;
+  /**
+   * When false, quick incident reports are blocked (local policy).
+   * Supabase profile sync sets true for signed-in users.
+   */
+  over18Verified?: boolean;
 }
 
 export const DEFAULT_REPUTATION_SCORE = 50;
@@ -30,7 +35,9 @@ export function getStoredUser(): AuthUser | null {
         typeof u.reputationScore === "number" && !Number.isNaN(u.reputationScore)
           ? u.reputationScore
           : DEFAULT_REPUTATION_SCORE;
-      return { ...u, reputationScore: score };
+      const over18 =
+        typeof u.over18Verified === "boolean" ? u.over18Verified : undefined;
+      return { ...u, reputationScore: score, ...(over18 !== undefined ? { over18Verified: over18 } : {}) };
     }
     return null;
   } catch {

@@ -26,13 +26,17 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
     const coords = coordsRef.current;
     setSosFired(true);
     if (coords) {
+      const { latitude, longitude } = coords;
       try {
-        await getSupabaseBrowser().from("active_sos").insert({
-          user_id: getDeviceId(),
-          lat: coords.latitude,
-          lng: coords.longitude,
-          created_at: new Date().toISOString(),
-        });
+        const sb = getSupabaseBrowser();
+        if (sb) {
+          await sb.from("active_sos").insert({
+            user_id: getDeviceId(),
+            lat: latitude,
+            lng: longitude,
+            created_at: new Date().toISOString(),
+          });
+        }
       } catch {
         // best-effort — alert is shown locally regardless
       }

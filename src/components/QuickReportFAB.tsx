@@ -55,6 +55,10 @@ interface QuickReportFABProps {
   onSOSPress?: () => void;
   /** Called when the Safe Walk button is tapped — starts the check-in timer */
   onSafeWalkPress?: () => void;
+  /** Only signed-in, eligible accounts can open the incident report flow */
+  reportingAllowed?: boolean;
+  /** When user tries to report without permission — e.g. open login */
+  onRequireReportingAuth?: () => void;
 }
 
 export default function QuickReportFAB({
@@ -64,6 +68,8 @@ export default function QuickReportFAB({
   onReportSubmitted,
   onSOSPress,
   onSafeWalkPress,
+  reportingAllowed = false,
+  onRequireReportingAuth,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -134,6 +140,14 @@ export default function QuickReportFAB({
       return;
     }
 
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      lastConsumedDropKeyRef.current = null;
+      onPinLocation?.(null);
+      onDropPinMode?.(false);
+      return;
+    }
+
     const dropKey = `${droppedPin.latitude},${droppedPin.longitude}`;
     if (lastConsumedDropKeyRef.current === dropKey) return;
     lastConsumedDropKeyRef.current = dropKey;
@@ -145,7 +159,7 @@ export default function QuickReportFAB({
     onDropPinMode?.(false);
     setStep("location");
     setIsOpen(true);
-  }, [droppedPin, locMode, onPinLocation, onDropPinMode]);
+  }, [droppedPin, locMode, onPinLocation, onDropPinMode, reportingAllowed, onRequireReportingAuth]);
 
   const handleGPS = useCallback(async () => {
     setGpsLoading(true);
@@ -171,13 +185,17 @@ export default function QuickReportFAB({
   }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     setPinnedLocation(null);
     onPinLocation?.(null);
     setLocMode("drop");
     setDropPinActive(true);
     onDropPinMode?.(true);
     setIsOpen(false);
-  }, [onDropPinMode, onPinLocation]);
+  }, [onDropPinMode, onPinLocation, reportingAllowed, onRequireReportingAuth]);
 
   const handleClearPin = useCallback(() => {
     setPinnedLocation(null);
@@ -188,6 +206,10 @@ export default function QuickReportFAB({
   }, [onPinLocation, onDropPinMode]);
 
   const handleSubmit = async () => {
+    if (!reportingAllowed) {
+      onRequireReportingAuth?.();
+      return;
+    }
     if (!selected || !pinnedLocation) return;
     setSubmitted(true);
     try {
@@ -253,6 +275,10 @@ export default function QuickReportFAB({
               </div>
               <button
                 onClick={() => {
+                  if (!reportingAllowed) {
+                    onRequireReportingAuth?.();
+                    return;
+                  }
                   setMenuOpen(false);
                   setIsOpen(true);
                 }}
