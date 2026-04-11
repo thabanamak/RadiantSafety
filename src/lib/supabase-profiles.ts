@@ -44,15 +44,52 @@ export async function fetchPublicProfile(
   return { id, username, upvotes, downvotes, reputation };
 }
 
+export type ProfileVoteSide = "up" | "down";
+
 /**
- * Vote another user's profile (see `vote_profile` RPC).
+ * Current user's vote on a profile (`profile_votes.side`), if any.
+ */
+export async function fetchMyProfileVote(
+  client: SupabaseClient,
+  profileId: string
+): Promise<ProfileVoteSide | null> {
+  const {
+    data: { user },
+    error: authError,
+  } = await client.auth.getUser();
+  if (authError || !user?.id) return null;
+
+  const { data, error } = await client
+    .from("profile_votes")
+    .select("side")
+    .eq("profile_id", profileId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[RadiantSafety] fetch profile_votes:", error.message);
+    return null;
+  }
+  const row = data as { side?: unknown } | null;
+  const side = row?.side;
+  return side === "up" || side === "down" ? side : null;
+}
+
+/**
+ * Toggle approve/disapprove on another user's profile (`vote_profile` RPC).
  */
 export async function voteProfile(
   client: SupabaseClient,
   profileId: string,
   direction: "up" | "down"
 ): Promise<
-  | { ok: true; upvotes: number; downvotes: number; reputation: number }
+  | {
+      ok: true;
+      upvotes: number;
+      downvotes: number;
+      reputation: number;
+      myVote: ProfileVoteSide | null;
+    }
   | { ok: false; error: string }
 > {
   const {
@@ -76,18 +113,33 @@ export async function voteProfile(
     upvotes?: unknown;
     downvotes?: unknown;
     reputation?: unknown;
+    my_vote?: unknown;
   } | null;
-  if (
-    typeof row?.upvotes !== "number" ||
-    typeof row?.downvotes !== "number" ||
-    typeof row?.reputation !== "number"
-  ) {
+
+  const n = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
+    }
+    return null;
+  };
+
+  const upvotes = n(row?.upvotes);
+  const downvotes = n(row?.downvotes);
+  const reputation = n(row?.reputation);
+  if (upvotes === null || downvotes === null || reputation === null) {
     return { ok: false, error: "Unexpected response from vote_profile" };
   }
+
+  const mv = row?.my_vote;
+  const myVote: ProfileVoteSide | null =
+    mv === "up" || mv === "down" ? mv : null;
   return {
     ok: true,
-    upvotes: row.upvotes,
-    downvotes: row.downvotes,
-    reputation: row.reputation,
+    upvotes,
+    downvotes,
+    reputation,
+    myVote,
   };
 }
