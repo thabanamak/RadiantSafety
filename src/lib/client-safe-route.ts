@@ -18,7 +18,11 @@ export interface ClientSafeRouteResult {
  * or try client first, then your FastAPI proxy:
  *   NEXT_PUBLIC_SAFE_ROUTE_ENGINE=hybrid
  *
- * Default (omit or `server`) uses only `/api/safe-route`.
+ * Default is `hybrid` (see `readSafeRouteEngineMode`). On hosts without a Python
+ * router (typical Vercel), set `NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client` so routing
+ * matches fast local in-browser behaviour and does not wait on `/api/safe-route`.
+ *
+ * Omit or `server` uses only `/api/safe-route`.
  *
  * Important: `client` / `hybrid` browser paths are grid A* — they do NOT follow OSM
  * sidewalks; use server mode + running FastAPI for real footpaths / Mapbox walking.
@@ -44,6 +48,8 @@ export function computeClientSafeRoute(
 export type SafeRouteEngineMode = "server" | "client" | "hybrid";
 
 export function readSafeRouteEngineMode(): SafeRouteEngineMode {
+  // `hybrid` upgrades with Python when `SAFETY_ROUTING_URL` is set on the server;
+  // without it, production should use `client` for the same path as local-only.
   const v = (process.env.NEXT_PUBLIC_SAFE_ROUTE_ENGINE ?? "hybrid").toLowerCase();
   if (v === "client" || v === "server") return v;
   return "hybrid"; // default — browser A* first, then upgrade with Python backend if available

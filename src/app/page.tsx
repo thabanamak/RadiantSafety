@@ -958,14 +958,18 @@ export default function Dashboard() {
       }
 
       if (engineMode === "server" || engineMode === "hybrid") {
-        let data: SafeRouteResponse & {
+        type ServerRoutePayload = SafeRouteResponse & {
           error_code?: string;
           detail?: unknown;
           hint?: string;
           attemptedUrl?: string;
           steps?: string[];
         };
-        try {
+
+        const backendUnavailable = (d: ServerRoutePayload) =>
+          d.error_code === "BACKEND_UNAVAILABLE" || d.error_code === "BACKEND_NOT_CONFIGURED";
+
+        const fetchSafeRouteFromApi = async (): Promise<{ res: Response; data: ServerRoutePayload }> => {
           const res = await fetch("/api/safe-route", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -983,20 +987,108 @@ export default function Dashboard() {
                 ? AbortSignal.timeout(55_000)
                 : undefined,
           });
-
+          let data: ServerRoutePayload;
           try {
-            data = (await res.json()) as typeof data;
+            data = (await res.json()) as ServerRoutePayload;
           } catch {
             console.warn("[SafeRoute] server response not JSON");
             throw new Error("__UNROUTABLE__");
           }
+          return { res, data };
+        };
 
+        try {
+          // Hybrid: run Mapbox street-snap and /api/safe-route in parallel so we
+          // do not wait for a slow or unreachable Python router before showing a
+          // route (localhost often has Python; Vercel usually does not).
+          if (engineMode === "hybrid" && snapPromise && clientPathComputed) {
+            const [snapSettled, serverSettled] = await Promise.allSettled([
+              snapPromise,
+              fetchSafeRouteFromApi(),
+            ]);
+
+            let hybridSnapInfo: string | undefined;
+
+            if (serverSettled.status === "fulfilled") {
+              const { res, data } = serverSettled.value;
+              console.log("[SafeRoute] server response:", res.status, data.error_code ?? "ok");
+
+              if (res.ok) {
+                try {
+                  const line = responseToLineFeature(data);
+                  const serverCoords = line.geometry.coordinates;
+                  if (Array.isArray(serverCoords) && serverCoords.length >= 2) {
+                    setSafeRouteData(serverCoords as [number, number][]);
+                    if (clientEntersHazard) setShowSafeWalk(true);
+                    return;
+                  }
+                } catch {
+                  /* fall through to street-snapped client */
+                }
+                hybridSnapInfo = "Showing street-snapped route — server returned invalid geometry.";
+              } else if (res.status === 503 && backendUnavailable(data)) {
+                hybridSnapInfo =
+                  data.error_code === "BACKEND_NOT_CONFIGURED"
+                    ? "Showing street-snapped route — no server router URL on this deployment."
+                    : "Showing street-snapped route — Python routing service is offline.";
+              }
+            } else {
+              console.warn("[SafeRoute] server fetch failed:", serverSettled.reason);
+            }
+
+            const snapped =
+              snapSettled.status === "fulfilled" ? snapSettled.value : null;
+            if (!snapped) {
+              if (clientPath && clientPath.length >= 2) {
+                setSafeRouteData(clientPath);
+                setRouteInfo("Showing grid route — could not snap to streets (Mapbox directions).");
+                return;
+              }
+              if (serverSettled.status === "rejected") {
+                const r = serverSettled.reason;
+                if (r instanceof Error && r.name === "AbortError") {
+                  setRouteError("Route request timed out. Try again or check your connection.");
+                } else {
+                  setRouteError("Could not compute route.");
+                }
+                return;
+              }
+              setRouteError("Could not compute route. Enable location and try again.");
+              return;
+            }
+
+            if (!hybridSnapInfo) {
+              if (serverSettled.status === "rejected") {
+                const r = serverSettled.reason;
+                hybridSnapInfo =
+                  r instanceof Error && r.name === "AbortError"
+                    ? "Showing street-snapped route — routing service timed out."
+                    : "Showing street-snapped route — server upgrade unavailable.";
+              } else if (serverSettled.status === "fulfilled") {
+                const { res } = serverSettled.value;
+                if (res.ok) {
+                  hybridSnapInfo = "Showing street-snapped route — server returned invalid geometry.";
+                } else if (!(res.status === 503 && backendUnavailable(serverSettled.value.data))) {
+                  hybridSnapInfo = "Showing street-snapped route — server upgrade unavailable.";
+                }
+              }
+            }
+            if (hybridSnapInfo) setRouteInfo(hybridSnapInfo);
+            setSafeRouteData(snapped);
+            return;
+          }
+
+          const { res, data } = await fetchSafeRouteFromApi();
           console.log("[SafeRoute] server response:", res.status, data.error_code ?? "ok");
 
           if (!res.ok) {
-            if (res.status === 503 && data.error_code === "BACKEND_UNAVAILABLE") {
+            if (res.status === 503 && backendUnavailable(data)) {
               if (clientPathComputed) {
-                setRouteInfo("Showing street-snapped route — Python routing service is offline.");
+                setRouteInfo(
+                  data.error_code === "BACKEND_NOT_CONFIGURED"
+                    ? "Showing street-snapped route — no server router URL on this deployment."
+                    : "Showing street-snapped route — Python routing service is offline.",
+                );
                 const snapped = snapPromise ? await snapPromise : null;
                 const fallback = snapped ?? clientPath;
                 if (fallback && fallback.length >= 2) {
@@ -1044,7 +1136,9 @@ export default function Dashboard() {
                 (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
                   serverErr.message.includes("ECONNREFUSED"))
               ) {
-                setRouteError("Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.");
+                setRouteError(
+                  "Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.",
+                );
               } else {
                 setRouteError("Could not compute route.");
               }
