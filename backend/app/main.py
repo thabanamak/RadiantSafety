@@ -30,6 +30,7 @@ from app.engine.pathfinding import (
     path_mean_heat,
     path_peak_heat,
 )
+from app.engine.polyline_sanitize import sanitize_route_polyline
 
 # Load tokens from RadiantSafety/.env.local when uvicorn runs from backend/
 _env_root = Path(__file__).resolve().parent.parent.parent
@@ -339,6 +340,12 @@ def compute_route(body: RouteRequest) -> RouteResponse:
             dist = 0.0
         # Estimate walking duration for A* fallback (~5 km/h)
         dur = dist / 1.39 if dist > 0 else 0.0
+
+    # Sanitize: remove loops, simplify, smooth
+    path = sanitize_route_polyline(path)
+    dist = _path_length_m(path)
+    if dist > 0:
+        dur = dist / 1.39
 
     waypoints = [LatLon(latitude=lat, longitude=lon) for lat, lon in path]
     mean_h = path_mean_heat(path, heats) if heats else 0.0

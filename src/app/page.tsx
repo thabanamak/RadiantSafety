@@ -43,6 +43,8 @@ interface SupabaseIncident {
 
 type ModalState = "closed" | "login" | "signup";
 
+export type RoutingStatus = "off" | "planning" | "active";
+
 export default function Dashboard() {
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
@@ -71,6 +73,12 @@ export default function Dashboard() {
   const [safeRouteLine, setSafeRouteLine] = useState<SafeRouteLineFeature | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+
+  const routingStatus: RoutingStatus = safeRouteLine
+    ? "active"
+    : gpsPin || droppedPin || dropPinMode
+      ? "planning"
+      : "off";
 
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
@@ -330,15 +338,17 @@ export default function Dashboard() {
       />
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
-          <AreaIncidentSummary
-            className="pointer-events-auto"
-            center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
-            vicpolItems={vicpolItems}
-            supabaseItems={supabaseItems}
-            active={activeIncidentTab === "official"}
-          />
-        </div>
+        {routingStatus === "off" && (
+          <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
+            <AreaIncidentSummary
+              className="pointer-events-auto"
+              center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
+              vicpolItems={vicpolItems}
+              supabaseItems={supabaseItems}
+              active={activeIncidentTab === "official"}
+            />
+          </div>
+        )}
 
         <TopNav
           reputation={currentUser}
@@ -351,10 +361,11 @@ export default function Dashboard() {
           onLoginClick={() => setModalState("login")}
           onSignupClick={() => setModalState("signup")}
           onLogout={handleLogout}
+          routingActive={routingStatus !== "off"}
         />
 
-        {/* Bottom crime-news sheet (no left-side toggle) */}
-        <NewsIncidentFeed
+        {/* Bottom crime-news sheet — hidden during routing for clean UI */}
+        {routingStatus === "off" && <NewsIncidentFeed
           items={vicpolItems.map((i) => ({
             id: i.id,
             outlet: "Victoria Police",
@@ -366,10 +377,10 @@ export default function Dashboard() {
             longitude: i.longitude,
           }))}
           onViewMap={(coords) => setFlyTarget(coords)}
-        />
+        />}
 
         {/* User Reported empty state */}
-        {activeIncidentTab === "user-reported" && (
+        {activeIncidentTab === "user-reported" && routingStatus === "off" && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-radiant-border bg-radiant-surface/90 px-6 py-5 text-center shadow-xl backdrop-blur-xl">
               <span className="text-2xl">📍</span>
