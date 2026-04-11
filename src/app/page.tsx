@@ -61,6 +61,8 @@ import type { SOSAlert } from "@/components/SOSAreaPanel";
 import type { FriendLocation } from "@/components/RadiantMap";
 import SOSController from "@/features/sos/SOSController";
 import IncomingSOSBanner, { type IncomingSOS } from "@/components/IncomingSOSBanner";
+import SafeWalkTimer from "@/components/SafeWalkTimer";
+import HotspotNudge from "@/components/HotspotNudge";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
@@ -189,6 +191,9 @@ export default function Dashboard() {
   // SOS — sheet open state is owned here so the FAB can trigger it;
   // all other SOS logic lives in SOSController
   const [showSOSSheet, setShowSOSSheet] = useState(false);
+  const [showSafeWalk, setShowSafeWalk] = useState(false);
+  const [showHotspotNudge, setShowHotspotNudge] = useState(false);
+  const nudgeDismissedUntil = useRef<number>(0);
   const [sosMapAlerts, setSosMapAlerts] = useState<SOSAlert[]>([]);
   // Incoming SOS banner — fires when any device inserts into active_sos via Realtime
   const [incomingSOS, setIncomingSOS] = useState<IncomingSOS | null>(null);
@@ -526,6 +531,32 @@ export default function Dashboard() {
     return capIncidents(raw);
   }, [vicpolItems, supabaseItems]);
 
+  // Hotspot nudge — check if user has walked into a high-incident-density zone
+  useEffect(() => {
+    if (!userCoords || showSafeWalk) return;
+    if (Date.now() < nudgeDismissedUntil.current) return;
+
+    const { latitude, longitude } = userCoords;
+    const R = 6_371_000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+
+    // Score = sum of incident intensities within 300 m
+    let score = 0;
+    const allPoints = [...supabaseMapPoints, ...vicpolMapPoints];
+    for (const pt of allPoints) {
+      const dLat = toRad(pt.latitude - latitude);
+      const dLng = toRad(pt.longitude - longitude);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(latitude)) * Math.cos(toRad(pt.latitude)) * Math.sin(dLng / 2) ** 2;
+      const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (dist <= 300) score += pt.intensity ?? 1;
+    }
+
+    // Threshold: combined intensity > 15 within 300 m triggers the nudge
+    setShowHotspotNudge(score > 15);
+  }, [userCoords, supabaseMapPoints, vicpolMapPoints, showSafeWalk]);
+
   const requestContextualSafeRoute = useCallback(async () => {
     if (!selectedDestination) return;
 
@@ -816,6 +847,29 @@ export default function Dashboard() {
         }
       />
 
+      {/* Safe Walk dead-man's-switch timer */}
+      {showSafeWalk && (
+        <SafeWalkTimer
+          userCoords={userCoords}
+          onEnd={() => setShowSafeWalk(false)}
+        />
+      )}
+
+      {/* Hotspot nudge — shown when user enters a high-incident zone */}
+      {showHotspotNudge && !showSafeWalk && (
+        <HotspotNudge
+          onStart={() => {
+            setShowHotspotNudge(false);
+            setShowSafeWalk(true);
+          }}
+          onDismiss={() => {
+            setShowHotspotNudge(false);
+            // Don't re-nudge for 10 minutes after dismissal
+            nudgeDismissedUntil.current = Date.now() + 10 * 60 * 1000;
+          }}
+        />
+      )}
+
       <div className="absolute inset-0 z-0">
         <RadiantMap
           onFlyTo={flyTarget}
@@ -963,6 +1017,7 @@ export default function Dashboard() {
         droppedPin={droppedPin}
         onReportSubmitted={handleReportSubmitted}
         onSOSPress={() => setShowSOSSheet(true)}
+        onSafeWalkPress={() => setShowSafeWalk(true)}
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}

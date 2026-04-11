@@ -11,6 +11,7 @@ import {
   Siren,
   ImagePlus,
   Loader2,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
@@ -52,6 +53,8 @@ interface QuickReportFABProps {
   onReportSubmitted?: (report: SubmittedReportPayload) => void | Promise<void>;
   /** Called when the SOS button is tapped — opens the issue selection sheet */
   onSOSPress?: () => void;
+  /** Called when the Safe Walk button is tapped — starts the check-in timer */
+  onSafeWalkPress?: () => void;
 }
 
 export default function QuickReportFAB({
@@ -60,6 +63,7 @@ export default function QuickReportFAB({
   droppedPin,
   onReportSubmitted,
   onSOSPress,
+  onSafeWalkPress,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -222,6 +226,24 @@ export default function QuickReportFAB({
       <div className="pointer-events-auto fixed bottom-6 right-6 z-50">
         {menuOpen && (
           <>
+            {/* Safe Walk — top (above incident report) */}
+            <div className="group absolute right-0 bottom-0 -translate-y-[144px]">
+              <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                  Safe Walk
+                  <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 border border-radiant-border border-t-0 border-l-0 bg-black/90" />
+                </div>
+              </div>
+              <button
+                onClick={() => { setMenuOpen(false); onSafeWalkPress?.(); }}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-green-500/40 bg-radiant-surface/95 shadow-lg backdrop-blur-xl transition-transform hover:scale-105 active:scale-95"
+                aria-label="Safe Walk timer"
+              >
+                <Shield className="h-5 w-5 text-green-400" />
+              </button>
+            </div>
+
+            {/* Incident Report */}
             <div className="group absolute right-0 bottom-0 -translate-y-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -241,6 +263,7 @@ export default function QuickReportFAB({
               </button>
             </div>
 
+            {/* SOS */}
             <div className="group absolute right-0 bottom-0 -translate-x-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
