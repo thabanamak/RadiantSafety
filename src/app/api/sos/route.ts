@@ -26,7 +26,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "lat and lng are required" }, { status: 400 });
     }
 
-    const { data, error } = await getSupabase().rpc("nearby_incidents", {
+    const supabase = getSupabase();
+    if (!supabase) {
+      return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+    }
+
+    const { data, error } = await supabase.rpc("nearby_incidents", {
       lat,
       lng,
       radius_meters: Math.min(radius, 5000), // hard cap at 5 km

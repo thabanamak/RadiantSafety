@@ -16,8 +16,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "alert_id and user_id are required" }, { status: 400 });
     }
 
+    const supabase = getSupabase();
+    if (!supabase) {
+      return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+    }
+
     // Only the original sender can resolve their own alert
-    const { data, error } = await getSupabase()
+    const { data, error } = await supabase
       .from("sos_alerts")
       .update({
         resolved_at: new Date().toISOString(),

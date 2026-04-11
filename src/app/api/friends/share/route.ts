@@ -20,7 +20,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { error } = await getSupabase().from("friend_locations").upsert(
+    const supabase = getSupabase();
+    if (!supabase) {
+      return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+    }
+
+    const { error } = await supabase.from("friend_locations").upsert(
       {
         room_code: room_code.toUpperCase(),
         device_id,

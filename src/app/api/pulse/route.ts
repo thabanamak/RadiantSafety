@@ -20,7 +20,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
     }
 
-    const { error } = await getSupabase().from("user_pulse").upsert(
+    const supabase = getSupabase();
+    if (!supabase) {
+      return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+    }
+
+    const { error } = await supabase.from("user_pulse").upsert(
       {
         user_id,
         last_seen: new Date().toISOString(),

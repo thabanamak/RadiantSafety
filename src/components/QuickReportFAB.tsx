@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
-import { AlertTriangle, X, MapPin, Navigation, PenLine, Trash2, CheckCircle, Siren } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  AlertTriangle,
+  X,
+  MapPin,
+  Navigation,
+  Trash2,
+  CheckCircle,
+  Siren,
+  ImagePlus,
+  Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation";
 import type { ReportCategory } from "@/lib/types";
@@ -23,10 +33,23 @@ export type PinLocation = {
   mode: "gps" | "dropped";
 };
 
+export type SubmittedReportPayload = {
+  category: ReportCategory;
+  description: string;
+  location: PinLocation;
+  /** Optional photo as data URL. */
+  imageDataUrl?: string | null;
+};
+
+const PHOTO_GUIDELINE =
+  "Add an optional photo of the scene only: lighting, street, building exterior, or signage. Please avoid faces, people in distress, injuries, or graphic content — help keep the feed respectful and useful for everyone.";
+
 interface QuickReportFABProps {
   onPinLocation?: (pin: PinLocation | null) => void;
   onDropPinMode?: (active: boolean) => void;
   droppedPin?: { latitude: number; longitude: number } | null;
+  /** Called when the user completes submit (location required). May be async (e.g. Supabase insert). */
+  onReportSubmitted?: (report: SubmittedReportPayload) => void | Promise<void>;
   /** Called when the SOS button is tapped — opens the issue selection sheet */
   onSOSPress?: () => void;
 }
@@ -35,6 +58,7 @@ export default function QuickReportFAB({
   onPinLocation,
   onDropPinMode,
   droppedPin,
+  onReportSubmitted,
   onSOSPress,
 }: QuickReportFABProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -44,31 +68,79 @@ export default function QuickReportFAB({
   const [selected, setSelected] = useState<ReportCategory | null>(null);
   const [description, setDescription] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [step, setStep] = useState<"category" | "location" | "sign">("category");
+  const [step, setStep] = useState<"category" | "location">("category");
 
-  // Location state
   const [locMode, setLocMode] = useState<"none" | "gps" | "drop">("none");
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [pinnedLocation, setPinnedLocation] = useState<PinLocation | null>(null);
   const [dropPinActive, setDropPinActive] = useState(false);
 
-  // Signature state — native canvas
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const isDrawing = useRef(false);
-  const lastPos = useRef<{ x: number; y: number } | null>(null);
-  const [hasSig, setHasSig] = useState(false);
-  const [sigData, setSigData] = useState<string | null>(null);
+  const [attachedImageDataUrl, setAttachedImageDataUrl] = useState<string | null>(null);
+  const [imageReadLoading, setImageReadLoading] = useState(false);
+  const [imagePickError, setImagePickError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // When a dropped pin comes back from the map
-  useEffect(() => {
-    if (droppedPin && locMode === "drop") {
-      const pin: PinLocation = { ...droppedPin, mode: "dropped" };
-      setPinnedLocation(pin);
-      onPinLocation?.(pin);
-      setDropPinActive(false);
-      onDropPinMode?.(false);
+  /** Prevents re-running the drop sync when parent still holds the same coords and locMode stays "drop". */
+  const lastConsumedDropKeyRef = useRef<string | null>(null);
+
+  const resetOptionalImage = useCallback(() => {
+    setAttachedImageDataUrl(null);
+    setImagePickError(null);
+    setImageReadLoading(false);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  }, []);
+
+  const handleImageFile = useCallback(async (file: File | null) => {
+    setImagePickError(null);
+    setAttachedImageDataUrl(null);
+    if (!file) return;
+
+    const mime = file.type;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+      setImagePickError("Please use a JPEG, PNG, or WebP image.");
+      return;
     }
+    if (file.size > 4 * 1024 * 1024) {
+      setImagePickError("Image must be under 4 MB.");
+      return;
+    }
+
+    setImageReadLoading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(new Error("read failed"));
+        r.readAsDataURL(file);
+      });
+      if (!dataUrl.startsWith("data:")) throw new Error("invalid data url");
+      setAttachedImageDataUrl(dataUrl);
+    } catch {
+      setImagePickError("Could not read this image. Try another file.");
+    } finally {
+      setImageReadLoading(false);
+    }
+  }, []);
+
+  // When the user places a pin on the map, sync coords, exit map drop mode, and reopen the panel on the location step.
+  useEffect(() => {
+    if (!droppedPin || locMode !== "drop") {
+      if (!droppedPin) lastConsumedDropKeyRef.current = null;
+      return;
+    }
+
+    const dropKey = `${droppedPin.latitude},${droppedPin.longitude}`;
+    if (lastConsumedDropKeyRef.current === dropKey) return;
+    lastConsumedDropKeyRef.current = dropKey;
+
+    const pin: PinLocation = { ...droppedPin, mode: "dropped" };
+    setPinnedLocation(pin);
+    onPinLocation?.(pin);
+    setDropPinActive(false);
+    onDropPinMode?.(false);
+    setStep("location");
+    setIsOpen(true);
   }, [droppedPin, locMode, onPinLocation, onDropPinMode]);
 
   const handleGPS = useCallback(async () => {
@@ -89,15 +161,19 @@ export default function QuickReportFAB({
 
   const handleEmergencyPing = useCallback(() => {
     setMenuOpen(false);
+    setEmergencyPinging(true);
     onSOSPress?.();
+    window.setTimeout(() => setEmergencyPinging(false), 1600);
   }, [onSOSPress]);
 
   const handleDropPin = useCallback(() => {
+    setPinnedLocation(null);
+    onPinLocation?.(null);
     setLocMode("drop");
     setDropPinActive(true);
     onDropPinMode?.(true);
-    setIsOpen(false); // collapse FAB so map is visible
-  }, [onDropPinMode]);
+    setIsOpen(false);
+  }, [onDropPinMode, onPinLocation]);
 
   const handleClearPin = useCallback(() => {
     setPinnedLocation(null);
@@ -107,97 +183,45 @@ export default function QuickReportFAB({
     onDropPinMode?.(false);
   }, [onPinLocation, onDropPinMode]);
 
-  // Canvas drawing helpers
-  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
-
-  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    isDrawing.current = true;
-    lastPos.current = getPos(e);
-    (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
-  };
-
-  const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing.current || !canvasRef.current || !lastPos.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    if (!ctx) return;
-    const pos = getPos(e);
-    ctx.strokeStyle = "#ef4444";
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(lastPos.current.x, lastPos.current.y);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
-    lastPos.current = pos;
-    setHasSig(true);
-  };
-
-  const endDraw = () => {
-    if (!isDrawing.current) return;
-    isDrawing.current = false;
-    lastPos.current = null;
-    if (canvasRef.current) {
-      setSigData(canvasRef.current.toDataURL());
-    }
-  };
-
-  const clearCanvas = () => {
-    if (!canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    setHasSig(false);
-    setSigData(null);
-  };
-
-  const handleSubmit = () => {
-    if (!selected) return;
-    console.log("Report submitted:", {
-      category: selected,
-      description,
-      location: pinnedLocation,
-      signature: sigData,
-    });
+  const handleSubmit = async () => {
+    if (!selected || !pinnedLocation) return;
     setSubmitted(true);
-    setTimeout(() => {
-      setIsOpen(false);
-      setSubmitted(false);
-      setSelected(null);
-      setDescription("");
-      setStep("category");
-      setPinnedLocation(null);
-      setLocMode("none");
-      setHasSig(false);
-      setSigData(null);
-      onPinLocation?.(null);
-    }, 1800);
+    try {
+      await onReportSubmitted?.({
+        category: selected,
+        description,
+        location: pinnedLocation,
+        ...(attachedImageDataUrl ? { imageDataUrl: attachedImageDataUrl } : {}),
+      });
+    } finally {
+      setTimeout(() => {
+        setIsOpen(false);
+        setSubmitted(false);
+        setSelected(null);
+        setDescription("");
+        setStep("category");
+        setPinnedLocation(null);
+        setLocMode("none");
+        resetOptionalImage();
+        onPinLocation?.(null);
+      }, 1800);
+    }
   };
 
   const handleClose = () => {
     setIsOpen(false);
+    resetOptionalImage();
     if (dropPinActive) {
       setDropPinActive(false);
       onDropPinMode?.(false);
     }
   };
 
-  // Re-open FAB after drop-pin mode returns
-  useEffect(() => {
-    if (!dropPinActive && locMode === "drop" && droppedPin) {
-      setIsOpen(true);
-    }
-  }, [dropPinActive, locMode, droppedPin]);
-
   if (!isOpen) {
     return (
       <div className="pointer-events-auto fixed bottom-6 right-6 z-50">
-        {/* Mini actions */}
         {menuOpen && (
           <>
-            {/* Top: Incident report */}
             <div className="group absolute right-0 bottom-0 -translate-y-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -217,7 +241,6 @@ export default function QuickReportFAB({
               </button>
             </div>
 
-            {/* Left: Emergency ping */}
             <div className="group absolute right-0 bottom-0 -translate-x-[72px]">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -239,7 +262,6 @@ export default function QuickReportFAB({
           </>
         )}
 
-        {/* Main button */}
         <button
           onClick={() => setMenuOpen((p) => !p)}
           className={cn(
@@ -260,6 +282,8 @@ export default function QuickReportFAB({
     );
   }
 
+  const STEPS = ["category", "location"] as const;
+
   return (
     <div className="pointer-events-auto fixed bottom-6 right-6 z-50 w-80 rounded-2xl border border-radiant-border bg-radiant-surface/95 p-5 shadow-2xl backdrop-blur-xl">
       {submitted ? (
@@ -272,20 +296,18 @@ export default function QuickReportFAB({
         </div>
       ) : (
         <>
-          {/* Header */}
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-gray-100">Quick Report</h3>
-              {/* Step pills */}
               <div className="flex gap-1">
-                {(["category", "location", "sign"] as const).map((s, i) => (
+                {STEPS.map((s, i) => (
                   <span
                     key={s}
                     className={cn(
                       "h-1.5 w-4 rounded-full transition-all",
                       step === s
                         ? "bg-radiant-red"
-                        : i < ["category", "location", "sign"].indexOf(step)
+                        : i < STEPS.indexOf(step)
                         ? "bg-radiant-red/40"
                         : "bg-gray-700"
                     )}
@@ -301,7 +323,6 @@ export default function QuickReportFAB({
             </button>
           </div>
 
-          {/* Step 1 — Category + Description */}
           {step === "category" && (
             <>
               <div className="mb-4 grid grid-cols-2 gap-2">
@@ -325,9 +346,68 @@ export default function QuickReportFAB({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe what you see (optional)..."
-                className="mb-4 w-full rounded-lg border border-radiant-border bg-radiant-card p-3 text-xs text-gray-200 placeholder-gray-600 outline-none focus:border-gray-500 resize-none"
+                className="mb-3 w-full resize-none rounded-lg border border-radiant-border bg-radiant-card p-3 text-xs text-gray-200 placeholder-gray-600 outline-none focus:border-gray-500"
                 rows={3}
               />
+
+              <div className="mb-3 rounded-lg border border-sky-500/25 bg-sky-500/5 p-3">
+                <p className="text-[11px] font-semibold text-sky-200">Before you add a photo</p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-gray-400">{PHOTO_GUIDELINE}</p>
+              </div>
+
+              <div className="mb-4">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  id="quick-report-photo"
+                  disabled={imageReadLoading}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    void handleImageFile(f);
+                  }}
+                />
+                <label
+                  htmlFor="quick-report-photo"
+                  className={cn(
+                    "flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-radiant-border py-2.5 text-xs font-medium text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200",
+                    imageReadLoading && "pointer-events-none opacity-60"
+                  )}
+                >
+                  {imageReadLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ImagePlus className="h-4 w-4" />
+                  )}
+                  {imageReadLoading ? "Loading photo…" : "Add photo (optional)"}
+                </label>
+
+                {imagePickError && (
+                  <p className="mt-2 text-[11px] text-red-400">{imagePickError}</p>
+                )}
+
+                {attachedImageDataUrl && (
+                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-radiant-border bg-radiant-card/80 p-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={attachedImageDataUrl}
+                      alt="Report attachment preview"
+                      className="h-14 w-14 shrink-0 rounded-md object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium text-gray-300">Photo attached</p>
+                      <button
+                        type="button"
+                        onClick={resetOptionalImage}
+                        className="mt-1 text-[11px] text-gray-500 underline-offset-2 hover:text-gray-300 hover:underline"
+                      >
+                        Remove photo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <button
                 onClick={() => setStep("location")}
@@ -336,7 +416,7 @@ export default function QuickReportFAB({
                   "w-full rounded-xl py-2.5 text-sm font-semibold transition-all",
                   selected
                     ? "bg-radiant-red text-white shadow-lg shadow-red-500/20 hover:shadow-red-500/40"
-                    : "bg-gray-800 text-gray-600 cursor-not-allowed"
+                    : "cursor-not-allowed bg-gray-800 text-gray-600"
                 )}
               >
                 Next: Add Location
@@ -344,14 +424,12 @@ export default function QuickReportFAB({
             </>
           )}
 
-          {/* Step 2 — Location */}
           {step === "location" && (
             <>
               <p className="mb-3 text-xs text-gray-400">
                 Pin where the incident happened so others can stay safe.
               </p>
 
-              {/* GPS button */}
               <button
                 onClick={handleGPS}
                 disabled={gpsLoading}
@@ -381,11 +459,8 @@ export default function QuickReportFAB({
                 )}
               </button>
 
-              {gpsError && (
-                <p className="mb-2 text-xs text-red-400">{gpsError}</p>
-              )}
+              {gpsError && <p className="mb-2 text-xs text-red-400">{gpsError}</p>}
 
-              {/* Drop pin button */}
               <button
                 onClick={handleDropPin}
                 className={cn(
@@ -409,7 +484,7 @@ export default function QuickReportFAB({
               {pinnedLocation && (
                 <button
                   onClick={handleClearPin}
-                  className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                  className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
                 >
                   <Trash2 className="h-3 w-3" />
                   Clear pin
@@ -419,74 +494,21 @@ export default function QuickReportFAB({
               <div className="flex gap-2">
                 <button
                   onClick={() => setStep("category")}
-                  className="flex-1 rounded-xl border border-radiant-border py-2.5 text-sm font-semibold text-gray-400 hover:text-gray-200 transition-all"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={() => setStep("sign")}
-                  className="flex-1 rounded-xl bg-radiant-red py-2.5 text-sm font-semibold text-white shadow-lg shadow-red-500/20 hover:shadow-red-500/40 transition-all"
-                >
-                  {pinnedLocation ? "Next: Sign" : "Skip & Sign"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* Step 3 — Signature */}
-          {step === "sign" && (
-            <>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <PenLine className="h-3.5 w-3.5 text-gray-400" />
-                  <p className="text-xs text-gray-400">Sign to verify your report</p>
-                </div>
-                <button
-                  onClick={clearCanvas}
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:text-gray-300 hover:bg-radiant-card transition-colors"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  Clear
-                </button>
-              </div>
-
-              <div className="mb-4 overflow-hidden rounded-xl border border-radiant-border bg-radiant-card">
-                {!hasSig && (
-                  <p className="pointer-events-none absolute ml-3 mt-8 text-xs text-gray-600 select-none">
-                    Draw your signature here…
-                  </p>
-                )}
-                <canvas
-                  ref={canvasRef}
-                  width={270}
-                  height={96}
-                  className="w-full touch-none cursor-crosshair"
-                  onPointerDown={startDraw}
-                  onPointerMove={draw}
-                  onPointerUp={endDraw}
-                  onPointerLeave={endDraw}
-                />
-              </div>
-
-              {sigData && (
-                <div className="mb-3 flex items-center gap-1.5 rounded-lg bg-radiant-green/10 px-3 py-2">
-                  <CheckCircle className="h-3.5 w-3.5 text-radiant-green" />
-                  <span className="text-xs text-radiant-green">Signature captured</span>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setStep("location")}
-                  className="flex-1 rounded-xl border border-radiant-border py-2.5 text-sm font-semibold text-gray-400 hover:text-gray-200 transition-all"
+                  className="flex-1 rounded-xl border border-radiant-border py-2.5 text-sm font-semibold text-gray-400 transition-colors hover:text-gray-200"
                 >
                   Back
                 </button>
                 <button
                   onClick={handleSubmit}
-                  className="flex-1 rounded-xl bg-radiant-red py-2.5 text-sm font-semibold text-white shadow-lg shadow-red-500/20 hover:shadow-red-500/40 transition-all"
+                  disabled={!pinnedLocation}
+                  className={cn(
+                    "flex-1 rounded-xl py-2.5 text-sm font-semibold shadow-lg transition-all",
+                    pinnedLocation
+                      ? "bg-radiant-red text-white shadow-red-500/20 hover:shadow-red-500/40"
+                      : "cursor-not-allowed bg-gray-800 text-gray-600 shadow-none"
+                  )}
                 >
-                  Submit Report
+                  Submit report
                 </button>
               </div>
             </>

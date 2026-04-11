@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Map, { Layer, Marker, Source, type MapRef } from "react-map-gl/mapbox";
+import Map, { Layer, Marker, Popup, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
-import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
+import {
+  toGeoJSON,
+  userReports,
+  userReportToMapPoint,
+  MELBOURNE_CENTER,
+} from "@/lib/mock-data";
 import type { SafeRouteLineFeature } from "@/lib/safe-route";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
@@ -66,6 +71,33 @@ const heatmapLayer: LayerProps = {
     ],
   },
 };
+
+/** Avoid controlled-map feedback loops: Mapbox can re-emit move with tiny float drift. */
+function viewStateMeaningfullyChanged(
+  a: { latitude: number; longitude: number; zoom: number; bearing: number; pitch: number },
+  b: typeof a
+): boolean {
+  const eps = 1e-7;
+  return (
+    Math.abs(a.latitude - b.latitude) > eps ||
+    Math.abs(a.longitude - b.longitude) > eps ||
+    Math.abs(a.zoom - b.zoom) > 1e-5 ||
+    Math.abs(a.bearing - b.bearing) > 1e-4 ||
+    Math.abs(a.pitch - b.pitch) > 1e-4
+  );
+}
+
+function mapCenterMeaningfullyChanged(
+  a: { latitude: number; longitude: number; zoom: number },
+  b: { latitude: number; longitude: number; zoom: number }
+): boolean {
+  const eps = 1e-7;
+  return (
+    Math.abs(a.latitude - b.latitude) > eps ||
+    Math.abs(a.longitude - b.longitude) > eps ||
+    Math.abs(a.zoom - b.zoom) > 1e-5
+  );
+}
 
 const pointsLayer: LayerProps = {
   id: "incidents-points",
@@ -170,6 +202,11 @@ export default function RadiantMap({
   contextualRouteCoordinates,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
+  const lastReportedCenterRef = useRef<{
+    latitude: number;
+    longitude: number;
+    zoom: number;
+  } | null>(null);
   const [viewState, setViewState] = useState({
     latitude: MELBOURNE_CENTER.latitude as number,
     longitude: MELBOURNE_CENTER.longitude as number,
@@ -199,7 +236,17 @@ export default function RadiantMap({
     };
   }, [droppedPin]);
 
-  const geojson = toGeoJSON(reports ?? userReports);
+  const mapPoints =
+    reports ?? userReports.map(userReportToMapPoint);
+  const geojson = toGeoJSON(mapPoints);
+
+  const [reportPopup, setReportPopup] = useState<{
+    longitude: number;
+    latitude: number;
+    category: string;
+    trustLabel: string | null;
+    trustPoints: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!onFlyTo || !mapRef.current) return;
@@ -258,23 +305,68 @@ export default function RadiantMap({
 
   const onMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
-      setViewState(evt.viewState);
-      onCenterChange?.({
-        latitude: evt.viewState.latitude,
-        longitude: evt.viewState.longitude,
-        zoom: evt.viewState.zoom,
-      });
+      const vs = evt.viewState;
+      const next = {
+        latitude: vs.latitude,
+        longitude: vs.longitude,
+        zoom: vs.zoom,
+        bearing: vs.bearing,
+        pitch: vs.pitch,
+      };
+      setViewState((prev) =>
+        viewStateMeaningfullyChanged(prev, next) ? next : prev
+      );
+
+      if (!onCenterChange) return;
+      const center = {
+        latitude: next.latitude,
+        longitude: next.longitude,
+        zoom: next.zoom,
+      };
+      const last = lastReportedCenterRef.current;
+      if (last && !mapCenterMeaningfullyChanged(last, center)) return;
+      lastReportedCenterRef.current = center;
+      onCenterChange(center);
     },
     [onCenterChange]
   );
 
   const handleMapClick = useCallback(
     (evt: MapMouseEvent) => {
-      if (!dropPinMode) return;
-      onPinDropped?.({
-        latitude: evt.lngLat.lat,
-        longitude: evt.lngLat.lng,
-      });
+      if (dropPinMode) {
+        onPinDropped?.({
+          latitude: evt.lngLat.lat,
+          longitude: evt.lngLat.lng,
+        });
+        return;
+      }
+      const feats = evt.features;
+      const f = feats?.[0];
+      if (f?.properties) {
+        const p = f.properties as Record<string, unknown>;
+        const cat = String(p.category ?? "Report");
+        const tp = p.trustPoints;
+        const trustPoints =
+          typeof tp === "number"
+            ? tp
+            : tp != null
+              ? Number(tp)
+              : null;
+        const tl = p.trustLabel;
+        const trustLabel =
+          typeof tl === "string" ? tl : tl != null ? String(tl) : null;
+        setReportPopup({
+          longitude: evt.lngLat.lng,
+          latitude: evt.lngLat.lat,
+          category: cat,
+          trustLabel,
+          trustPoints: Number.isFinite(trustPoints as number)
+            ? (trustPoints as number)
+            : null,
+        });
+        return;
+      }
+      setReportPopup(null);
     },
     [dropPinMode, onPinDropped]
   );
@@ -292,6 +384,7 @@ export default function RadiantMap({
       {...viewState}
       onMove={onMove}
       onClick={handleMapClick}
+      interactiveLayerIds={["incidents-points"]}
       mapboxAccessToken={MAPBOX_TOKEN}
       mapStyle="mapbox://styles/mapbox/dark-v11"
       style={{ width: "100%", height: "100%" }}
@@ -322,6 +415,35 @@ export default function RadiantMap({
         >
           <Layer {...contextualSafeRouteLayer} />
         </Source>
+      )}
+
+      {reportPopup && (
+        <Popup
+          longitude={reportPopup.longitude}
+          latitude={reportPopup.latitude}
+          anchor="bottom"
+          onClose={() => setReportPopup(null)}
+          closeButton
+          closeOnClick={false}
+        >
+          <div className="max-w-[220px] text-xs text-gray-900">
+            <p className="font-semibold">{reportPopup.category}</p>
+            {reportPopup.trustLabel != null && (
+              <p className="mt-1 text-gray-700">
+                {reportPopup.trustLabel}
+                {reportPopup.trustPoints != null && (
+                  <span className="text-gray-500">
+                    {" "}
+                    · trust {reportPopup.trustPoints}
+                  </span>
+                )}
+              </p>
+            )}
+            {reportPopup.trustLabel == null && (
+              <p className="mt-1 text-gray-600">Official / historical incident</p>
+            )}
+          </div>
+        </Popup>
       )}
 
       {/* GPS "ping me" marker — pulsing blue dot */}

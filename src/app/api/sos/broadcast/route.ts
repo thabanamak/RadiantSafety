@@ -22,7 +22,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid issue type" }, { status: 400 });
     }
 
-    const { error } = await getSupabase().from("sos_alerts").insert({
+    const supabase = getSupabase();
+    if (!supabase) {
+      return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+    }
+
+    const { error } = await supabase.from("sos_alerts").insert({
       user_id,
       issue,
       location: `POINT(${lng} ${lat})`,

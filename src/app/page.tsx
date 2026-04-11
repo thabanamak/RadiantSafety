@@ -16,7 +16,11 @@ const RadiantMap = dynamic(() => import("@/components/RadiantMap"), {
 });
 import TopNav from "@/components/TopNav";
 import type { IncidentTab } from "@/components/TopNav";
-import QuickReportFAB, { type PinLocation } from "@/components/QuickReportFAB";
+import QuickReportFAB, {
+  type PinLocation,
+  type SubmittedReportPayload,
+} from "@/components/QuickReportFAB";
+import AuthModal from "@/components/AuthModal";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isEmailLinkCallback } from "@/lib/auth-callback-url";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
@@ -49,7 +53,9 @@ import {
 import { computeClientSafeRoute, readSafeRouteEngineMode } from "@/lib/client-safe-route";
 import { snapRouteToStreets } from "@/lib/street-snap";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
+import { getSeverityForCategory } from "@/lib/category-severity";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
+import IncidentFeed from "@/components/IncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
 import type { FriendLocation } from "@/components/RadiantMap";
@@ -62,6 +68,8 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
+import { insertUserReport } from "@/lib/supabase-user-reports";
 
 interface VicPolIncident {
   id: string;
@@ -71,6 +79,7 @@ interface VicPolIncident {
   latitude: number | null;
   longitude: number | null;
   intensity: number;
+  /** Normalized 0–1 (from API); map heatmap uses `intensity` 1–10. */
   trustScore: number;
 }
 
@@ -152,6 +161,9 @@ export default function Dashboard() {
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
 
   const [supabaseItems, setSupabaseItems] = useState<SupabaseIncident[]>([]);
+
+  /** In-session user submissions (Quick Report); shown under User Reported + search. */
+  const [submittedUserReports, setSubmittedUserReports] = useState<UserReport[]>([]);
 
   // Location pin state — shared between FAB and map
   const [dropPinMode, setDropPinMode] = useState(false);
@@ -370,7 +382,7 @@ export default function Dashboard() {
       id: i.id,
       latitude: i.latitude as number,
       longitude: i.longitude as number,
-      trustScore: i.trustScore,
+      intensity: i.intensity,
       category: "Suspicious Activity",
     }));
 
@@ -378,8 +390,7 @@ export default function Dashboard() {
     id: i.id,
     latitude: i.location_lat,
     longitude: i.location_lng,
-    // intensity is 1–10; normalise to 0–1 for trustScore
-    trustScore: i.intensity / 10,
+    intensity: i.intensity,
     category: "Suspicious Activity",
   }));
 
@@ -398,6 +409,8 @@ export default function Dashboard() {
 
   const handleDropPinMode = useCallback((active: boolean) => {
     setDropPinMode(active);
+    // Do not clear droppedPin here — turning off drop mode also runs after a successful
+    // map click; clearing would remove the pin. Use handlePinLocation(null) to clear.
   }, []);
 
   const handlePinDropped = useCallback((pin: DroppedPin) => {
@@ -405,18 +418,75 @@ export default function Dashboard() {
     setDropPinMode(false);
   }, []);
 
+  const handleReportSubmitted = useCallback(
+    async (payload: SubmittedReportPayload) => {
+      let id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `report-${Date.now()}`;
+
+      const client = getSupabaseBrowser();
+      if (client) {
+        const result = await insertUserReport(client, {
+          category: payload.category,
+          description: payload.description.trim() || "(No description)",
+          latitude: payload.location.latitude,
+          longitude: payload.location.longitude,
+          imageUrl: null,
+        });
+        if (result.id) {
+          id = result.id;
+        } else {
+          console.warn(
+            "[RadiantSafety] user_reports insert skipped or failed:",
+            result.error
+          );
+        }
+      }
+
+      const report: UserReport = {
+        id,
+        latitude: payload.location.latitude,
+        longitude: payload.location.longitude,
+        trustPoints: 10,
+        category: payload.category,
+        description: payload.description.trim() || "(No description)",
+        imageDataUrl: payload.imageDataUrl ?? null,
+        verifiedBy: 0,
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        userId: authUser?.email ?? "anonymous",
+      };
+      setSubmittedUserReports((prev) => [report, ...prev]);
+      setActiveIncidentTab("user-reported");
+      setFlyTarget({
+        latitude: report.latitude,
+        longitude: report.longitude,
+        zoom: 16,
+      });
+    },
+    [authUser]
+  );
+
+  const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
+    id: r.id,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    intensity: getSeverityForCategory(r.category),
+    trustPoints: r.trustPoints,
+    category: r.category,
+  }));
+
   const handleLocateMe = useCallback(() => {
     if (!navigator.geolocation) return;
 
-    // If we already have a fix, just recenter — no need to re-request
     if (userCoords) {
       setFlyTarget({ latitude: userCoords.latitude, longitude: userCoords.longitude, zoom: 16 });
       setLocationDenied(false);
       return;
     }
 
-    // Attempt to get location — this re-triggers the browser permission prompt
-    // even if it was previously dismissed (some browsers allow re-prompting)
     setLocating(true);
     setLocationDenied(false);
     navigator.geolocation.getCurrentPosition(
@@ -714,7 +784,7 @@ export default function Dashboard() {
   }, []);
 
   function activeMapPoints(): MapIncidentPoint[] {
-    if (activeIncidentTab === "user-reported") return [];
+    if (activeIncidentTab === "user-reported") return userReportedMapPoints;
     if (activeIncidentTab === "official") return [...supabaseMapPoints, ...vicpolMapPoints];
     return supabaseMapPoints;
   }
@@ -845,31 +915,44 @@ export default function Dashboard() {
           }}
         />
 
-        {/* Bottom crime-news sheet (no left-side toggle) */}
-        <NewsIncidentFeed
-          items={vicpolItems.map((i) => ({
-            id: i.id,
-            outlet: "Victoria Police",
-            title: i.title,
-            url: i.url,
-            publishedAt: null,
-            areaName: i.suburb,
-            latitude: i.latitude,
-            longitude: i.longitude,
-          }))}
-          onViewMap={(coords) => setFlyTarget(coords)}
-        />
+        {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
+        {activeIncidentTab === "official" ? (
+          <NewsIncidentFeed
+            items={vicpolItems.map((i) => ({
+              id: i.id,
+              outlet: "Victoria Police",
+              title: i.title,
+              url: i.url,
+              publishedAt: null,
+              areaName: i.suburb,
+              latitude: i.latitude,
+              longitude: i.longitude,
+            }))}
+            onViewMap={(coords) => setFlyTarget(coords)}
+          />
+        ) : (
+          <IncidentFeed
+            reports={submittedUserReports}
+            onViewMap={handleViewMap}
+            reserveTopPx={220}
+            collapsedLabel={
+              submittedUserReports.length > 0
+                ? `User reports (${submittedUserReports.length})`
+                : "User reports"
+            }
+            sheetTitle="User-reported incidents"
+          />
+        )}
 
-        {/* User Reported empty state */}
-        {activeIncidentTab === "user-reported" && (
-          <div
-            id="user-reported-panel"
-            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
-          >
+        {/* User Reported empty state — only when nothing submitted this session */}
+        {activeIncidentTab === "user-reported" && submittedUserReports.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-radiant-border bg-radiant-surface/90 px-6 py-5 text-center shadow-xl backdrop-blur-xl">
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
-              <p className="text-xs text-gray-500">Be the first to report an incident in your area.</p>
+              <p className="text-xs text-gray-500">
+                Use the red quick-report button and set a location to add one.
+              </p>
             </div>
           </div>
         )}
@@ -879,6 +962,7 @@ export default function Dashboard() {
         onPinLocation={handlePinLocation}
         onDropPinMode={handleDropPinMode}
         droppedPin={droppedPin}
+        onReportSubmitted={handleReportSubmitted}
         onSOSPress={() => setShowSOSSheet(true)}
       />
 

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Siren, Syringe, Stethoscope, HeartPulse, ChevronLeft, ChevronRight, MapPin, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { getSupabaseBrowser } from "@/lib/supabase-browser";
+import { getSupabaseBrowser, isSupabaseBrowserConfigured } from "@/lib/supabase-browser";
 import type { SOSIssueType } from "@/components/SOSIssueSheet";
 import { getDeviceId } from "@/lib/identity";
 
@@ -62,9 +62,15 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
   // --- initial fetch ---------------------------------------------------------
   const fetchAlerts = useCallback(async () => {
     if (!userCoords) return;
+    const sb = getSupabaseBrowser();
+    if (!sb) {
+      setAlerts([]);
+      onAlertsChange?.([]);
+      return;
+    }
     setLoading(true);
     try {
-      const { data } = await getSupabaseBrowser().rpc("nearby_sos_alerts", {
+      const { data } = await sb.rpc("nearby_sos_alerts", {
         lat: userCoords.latitude,
         lng: userCoords.longitude,
         radius_meters: 1000,
@@ -83,7 +89,10 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
 
   // --- Realtime subscription -------------------------------------------------
   useEffect(() => {
-    const channel = getSupabaseBrowser()
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+
+    const channel = sb
       .channel("sos-alerts-live")
       // New nearby SOS — add to list and auto-open panel
       .on(
@@ -122,7 +131,9 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
       )
       .subscribe();
 
-    return () => { getSupabaseBrowser().removeChannel(channel); };
+    return () => {
+      sb.removeChannel(channel);
+    };
   }, [userCoords, onAlertsChange]);
 
   const recentCount = alerts.filter(
@@ -188,6 +199,16 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
               <div className="flex flex-col items-center gap-1 px-4 py-6 text-center">
                 <MapPin className="h-4 w-4 text-gray-600" />
                 <p className="text-xs text-gray-500">Enable location to see nearby SOS alerts</p>
+              </div>
+            ) : !isSupabaseBrowserConfigured() ? (
+              <div className="flex flex-col items-center gap-1 px-4 py-6 text-center">
+                <MapPin className="h-4 w-4 text-gray-600" />
+                <p className="text-xs text-gray-500">
+                  SOS live feed needs{" "}
+                  <span className="font-mono text-[10px] text-gray-400">NEXT_PUBLIC_SUPABASE_URL</span> and{" "}
+                  <span className="font-mono text-[10px] text-gray-400">NEXT_PUBLIC_SUPABASE_ANON_KEY</span> in{" "}
+                  <span className="text-gray-400">.env.local</span>.
+                </p>
               </div>
             ) : alerts.length === 0 && !loading ? (
               <div className="flex flex-col items-center gap-1.5 px-4 py-6 text-center">

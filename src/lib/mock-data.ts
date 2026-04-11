@@ -1,4 +1,6 @@
 import type { MapIncidentPoint, UserReport, UserReputation } from "./types";
+import { getSeverityForCategory } from "./category-severity";
+import { getTrustDisplayText } from "./report-trust";
 
 export const MELBOURNE_CENTER = {
   latitude: -37.8136,
@@ -17,7 +19,7 @@ export const userReports: UserReport[] = [
     id: "r1",
     latitude: -37.8095,
     longitude: 144.9680,
-    trustScore: 0.92,
+    trustPoints: 10 + 42 - 2,
     category: "Gang Activity",
     description: "Group of 6+ intimidating pedestrians near Flinders Lane",
     verifiedBy: 14,
@@ -30,7 +32,7 @@ export const userReports: UserReport[] = [
     id: "r2",
     latitude: -37.8120,
     longitude: 144.9655,
-    trustScore: 0.78,
+    trustPoints: 10 + 18 - 0,
     category: "Unsafe Vibe",
     description: "Dark alleyway with no foot traffic, felt very unsafe",
     verifiedBy: 8,
@@ -43,7 +45,7 @@ export const userReports: UserReport[] = [
     id: "r3",
     latitude: -37.8150,
     longitude: 144.9590,
-    trustScore: 0.85,
+    trustPoints: 10 + 31 - 1,
     category: "Poor Lighting",
     description: "Multiple streetlights out along Southbank Promenade",
     verifiedBy: 11,
@@ -56,7 +58,7 @@ export const userReports: UserReport[] = [
     id: "r4",
     latitude: -37.8070,
     longitude: 144.9710,
-    trustScore: 0.65,
+    trustPoints: 10 + 27 - 3,
     category: "Theft",
     description: "Phone snatched from hand near Southern Cross Station",
     verifiedBy: 5,
@@ -69,7 +71,7 @@ export const userReports: UserReport[] = [
     id: "r5",
     latitude: -37.8110,
     longitude: 144.9720,
-    trustScore: 0.55,
+    trustPoints: 10 + 12 - 4,
     category: "Suspicious Activity",
     description: "Individual following people through Queen Victoria Market",
     verifiedBy: 3,
@@ -82,7 +84,7 @@ export const userReports: UserReport[] = [
     id: "r6",
     latitude: -37.8180,
     longitude: 144.9560,
-    trustScore: 0.72,
+    trustPoints: 10 + 35 - 2,
     category: "Drug Activity",
     description: "Open drug use near Crown Casino underpass",
     verifiedBy: 9,
@@ -95,7 +97,7 @@ export const userReports: UserReport[] = [
     id: "r7",
     latitude: -37.8060,
     longitude: 144.9630,
-    trustScore: 0.88,
+    trustPoints: 10 + 22 - 1,
     category: "Harassment",
     description: "Verbal harassment reported near Melbourne Central",
     verifiedBy: 7,
@@ -108,7 +110,7 @@ export const userReports: UserReport[] = [
     id: "r8",
     latitude: -37.8100,
     longitude: 144.9600,
-    trustScore: 0.60,
+    trustPoints: 10 + 15 - 2,
     category: "Vandalism",
     description: "Car windows smashed on Little Collins Street",
     verifiedBy: 4,
@@ -118,6 +120,17 @@ export const userReports: UserReport[] = [
     userId: "u8",
   },
 ];
+
+export function userReportToMapPoint(r: UserReport): MapIncidentPoint {
+  return {
+    id: r.id,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    category: r.category,
+    intensity: getSeverityForCategory(r.category),
+    trustPoints: r.trustPoints,
+  };
+}
 
 export function toGeoJSON(reports: MapIncidentPoint[]): GeoJSON.FeatureCollection {
   return {
@@ -130,9 +143,16 @@ export function toGeoJSON(reports: MapIncidentPoint[]): GeoJSON.FeatureCollectio
       },
       properties: {
         id: r.id,
-        trustScore: r.trustScore,
-        intensity: Math.round(r.trustScore * 10),
         category: r.category,
+        intensity: r.intensity,
+        trustPoints:
+          r.trustPoints !== undefined && r.trustPoints !== null
+            ? r.trustPoints
+            : null,
+        trustLabel:
+          r.trustPoints !== undefined && r.trustPoints !== null
+            ? getTrustDisplayText(r.trustPoints)
+            : null,
       },
     })),
   };

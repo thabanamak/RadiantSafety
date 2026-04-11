@@ -36,16 +36,19 @@ export default function SOSController({
       const broadcast = async (lat: number, lng: number) => {
         let photoUrl: string | null = null;
         if (photo) {
-          const ext = photo.name.split(".").pop() ?? "jpg";
-          const path = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-          const { data, error } = await getSupabaseBrowser().storage
-            .from("sos-photos")
-            .upload(path, photo, { cacheControl: "3600", upsert: false });
-          if (!error && data) {
-            const {
-              data: { publicUrl },
-            } = getSupabaseBrowser().storage.from("sos-photos").getPublicUrl(data.path);
-            photoUrl = publicUrl;
+          const sb = getSupabaseBrowser();
+          if (sb) {
+            const ext = photo.name.split(".").pop() ?? "jpg";
+            const path = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+            const { data, error } = await sb.storage
+              .from("sos-photos")
+              .upload(path, photo, { cacheControl: "3600", upsert: false });
+            if (!error && data) {
+              const {
+                data: { publicUrl },
+              } = sb.storage.from("sos-photos").getPublicUrl(data.path);
+              photoUrl = publicUrl;
+            }
           }
         }
 
@@ -92,16 +95,19 @@ export default function SOSController({
 
       let photoUrl: string | null = null;
       if (photo) {
-        const ext = photo.name.split(".").pop() ?? "jpg";
-        const path = `resolve-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-        const { data, error } = await getSupabaseBrowser().storage
-          .from("sos-photos")
-          .upload(path, photo, { cacheControl: "3600", upsert: false });
-        if (!error && data) {
-          const {
-            data: { publicUrl },
-          } = getSupabaseBrowser().storage.from("sos-photos").getPublicUrl(data.path);
-          photoUrl = publicUrl;
+        const sb = getSupabaseBrowser();
+        if (sb) {
+          const ext = photo.name.split(".").pop() ?? "jpg";
+          const path = `resolve-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+          const { data, error } = await sb.storage
+            .from("sos-photos")
+            .upload(path, photo, { cacheControl: "3600", upsert: false });
+          if (!error && data) {
+            const {
+              data: { publicUrl },
+            } = sb.storage.from("sos-photos").getPublicUrl(data.path);
+            photoUrl = publicUrl;
+          }
         }
       }
 

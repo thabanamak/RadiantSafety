@@ -1,15 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let cached: SupabaseClient | null = null;
-
-/**
- * Server-only Supabase client (service key or anon fallback).
- * Lazy — only reads env and throws when first used, so `next build` can succeed
- * on CI before env vars are present (routes still fail at runtime if unset).
- */
-export function getSupabase(): SupabaseClient {
-  if (cached) return cached;
-
+function readSupabaseEnv() {
   const supabaseUrl = (
     process.env.SUPABASE_URL ??
     process.env.NEXT_PUBLIC_SUPABASE_URL ??
@@ -17,17 +8,22 @@ export function getSupabase(): SupabaseClient {
   ).replace(/\/$/, "");
 
   const supabaseKey =
-    process.env.SUPABASE_SERVICE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-    "";
+    process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  return { supabaseUrl, supabaseKey };
+}
 
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error(
-      "Supabase env vars missing. Set SUPABASE_URL + SUPABASE_SERVICE_KEY (server) " +
-        "or NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY (client)."
-    );
-  }
+export function isSupabaseConfigured(): boolean {
+  const { supabaseUrl, supabaseKey } = readSupabaseEnv();
+  return Boolean(supabaseUrl && supabaseKey);
+}
 
-  cached = createClient(supabaseUrl, supabaseKey);
-  return cached;
+let client: SupabaseClient | null = null;
+
+/** Server-side Supabase client; null when env is not set (avoids throwing at module load). */
+export function getSupabase(): SupabaseClient | null {
+  if (client) return client;
+  const { supabaseUrl, supabaseKey } = readSupabaseEnv();
+  if (!supabaseUrl || !supabaseKey) return null;
+  client = createClient(supabaseUrl, supabaseKey);
+  return client;
 }

@@ -13,6 +13,15 @@ export interface SupabaseIncident {
 }
 
 export async function GET() {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return NextResponse.json({
+      items: [],
+      error:
+        "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY (or NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY).",
+    });
+  }
+
   try {
     // Supabase/PostgREST commonly defaults to returning only the first 1000 rows.
     // Paginate until exhaustion so the heatmap can use the full dataset.
@@ -24,7 +33,7 @@ export async function GET() {
     const MAX_ROWS = 20000;
 
     while (items.length < MAX_ROWS) {
-      const { data, error } = await getSupabase()
+      const { data, error } = await supabase
         .from("incidents")
         .select("id, title, suburb, location_lat, location_lng, intensity, source, is_verified")
         .not("location_lat", "is", null)

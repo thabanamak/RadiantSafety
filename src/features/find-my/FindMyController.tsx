@@ -106,7 +106,9 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
 
   // Fetch existing members when room is joined
   const fetchMembers = useCallback(async (code: string) => {
-    const { data } = await getSupabaseBrowser()
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    const { data } = await sb
       .from("friend_locations")
       .select("*")
       .eq("room_code", code.toUpperCase());
@@ -121,7 +123,10 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
   useEffect(() => {
     if (!inRoom || !roomCode) return;
 
-    const channel = getSupabaseBrowser()
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+
+    const channel = sb
       .channel(`findmy-room-${roomCode}`)
       .on(
         "postgres_changes",
@@ -150,7 +155,9 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
       )
       .subscribe();
 
-    return () => { getSupabaseBrowser().removeChannel(channel); };
+    return () => {
+      sb.removeChannel(channel);
+    };
   }, [inRoom, roomCode]);
 
   // Push friend locations to map (exclude self)

@@ -113,7 +113,38 @@ export default function AreaIncidentSummary({
     const mid = local.filter((i) => i.intensity >= 5 && i.intensity <= 7).length;
     const low = local.filter((i) => i.intensity <= 4).length;
 
-    const avg = total === 0 ? null : Math.round((local.reduce((s, i) => s + i.intensity, 0) / total) * 10) / 10;
+    const areaKm2 = Math.PI * radiusKm * radiusKm;
+    const sumIntensity = local.reduce((s, i) => s + i.intensity, 0);
+    const sumSqIntensity = local.reduce(
+      (s, i) => s + i.intensity * i.intensity,
+      0
+    );
+
+    /**
+     * Intensity-weighted mean: sum(i²) / sum(i). Weights each point by its own
+     * severity so clusters of 8–10 incidents lift the headline more than a plain
+     * arithmetic mean (which was stuck ~5–6 when many mid-tier rows sat next to
+     * fewer high-severity ones — misaligned with the red heatmap).
+     * Blended with a calm term so large, mostly-empty disks don’t read as “max danger”.
+     */
+    let avg: number | null = null;
+    if (total === 0) {
+      avg = 0;
+    } else if (sumIntensity <= 0) {
+      avg = 0;
+    } else {
+      const weightedCore = sumSqIntensity / sumIntensity;
+      const arithmetic = sumIntensity / total;
+      const emptyEquivPerKm2 = 0.035;
+      const emptyWeight = areaKm2 * emptyEquivPerKm2;
+      const calmBlend =
+        emptyWeight > 0
+          ? arithmetic * (total / (total + emptyWeight))
+          : arithmetic;
+      avg = 0.72 * weightedCore + 0.28 * calmBlend;
+      avg = Math.min(10, Math.max(0, avg));
+      avg = Math.round(avg * 10) / 10;
+    }
 
     const wordCounts = new Map<string, number>();
     for (const i of local.slice(0, 40)) {
@@ -126,7 +157,7 @@ export default function AreaIncidentSummary({
       .slice(0, 3)
       .map(([w]) => w);
 
-    return { radiusKm, total, high, mid, low, avg, topWords };
+    return { radiusKm, total, high, mid, low, avg, topWords, areaKm2 };
   }, [center, vicpolItems, supabaseItems]);
 
   if (!active || !center || !summary) return null;
@@ -249,6 +280,12 @@ export default function AreaIncidentSummary({
 
               <p className="mt-3 text-[10px] text-gray-600">
                 Note: SOS alerts are never included in these counts — they are not crime data.
+              </p>
+              <p className="mt-2 text-[11px] text-gray-500">
+                <span className="text-gray-400">Avg intensity</span> is mostly a{" "}
+                <span className="text-gray-300">severity-weighted mean</span> (each incident counts more when its score is higher), so pockets of serious offences
+                move the number up more than a flat average would — closer to how the heatmap reads. A small blend with the calmer parts of the ~{summary.radiusKm.toFixed(summary.radiusKm < 2 ? 1 : 0)} km
+                radius (≈{summary.areaKm2.toFixed(0)} km²) keeps huge empty suburbs from looking “max red” from a few dots.
               </p>
             </div>
           )}
