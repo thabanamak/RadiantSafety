@@ -2,8 +2,12 @@ export interface UserReport {
   id: string;
   latitude: number;
   longitude: number;
-  /** Community trust = 10 + upvotes − downvotes (matches `user_reports.trust` in Supabase). */
+  /** Community trust score (= `user_reports.trust` when loaded from DB). */
   trustPoints: number;
+  /** `user_reports.trust_label` from Supabase when available. */
+  trustLabel?: string | null;
+  /** Current user’s vote on this report, if signed in (`user_report_votes.side`). */
+  myVote?: "up" | "down" | null;
   category: ReportCategory;
   description: string;
   /** Optional photo (data URL) from Quick Report. */

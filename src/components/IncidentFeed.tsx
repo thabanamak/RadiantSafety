@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { UserReport } from "@/lib/types";
-import { getTrustDisplayKind } from "@/lib/report-trust";
+import { getTrustDisplayKind, getTrustDisplayText } from "@/lib/report-trust";
+import { formatReportRelativeAge } from "@/lib/relative-time";
 
 interface IncidentFeedProps {
   reports: UserReport[];
@@ -26,6 +27,13 @@ interface IncidentFeedProps {
   /** Signed-in user id (normalized); used to allow deleting only your own reports. */
   currentUserId?: string | null;
   onDeleteReport?: (reportId: string) => void;
+  /** When signed in: filter to only your reports (past reports you filed). */
+  onlyMine?: boolean;
+  onOnlyMineChange?: (onlyMine: boolean) => void;
+  /** Total rows before `onlyMine` filter — for empty-state copy. */
+  totalBeforeMineFilter?: number;
+  /** Signed-in users only: toggle vote via Supabase (`toggle_user_report_vote` RPC). */
+  onVoteReport?: (reportId: string, direction: "up" | "down") => Promise<void>;
   /** Collapsed bar label (default: Incident Feed) */
   collapsedLabel?: string;
   /** Header when sheet is open */
@@ -37,17 +45,71 @@ interface IncidentFeedProps {
   reserveTopPx?: number;
 }
 
-function timeAgo(date: Date, nowMs: number): string {
-  const seconds = Math.floor((nowMs - date.getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 type SheetState = "collapsed" | "half" | "full";
+
+/** Standalone trust line — uses DB `trust` / `trust_label` when provided (realtime + fetch). */
+function TrustworthinessRow({
+  trustPoints,
+  trustLabel,
+  verifiedBy,
+}: {
+  trustPoints: number;
+  trustLabel?: string | null;
+  verifiedBy: number;
+}) {
+  const kind = getTrustDisplayKind(trustPoints);
+  const label = trustLabel?.trim() || getTrustDisplayText(trustPoints);
+  return (
+    <div className="mt-2 space-y-1">
+      <div
+        className={cn(
+          "rounded-md border px-2.5 py-1.5",
+          kind === "trustworthy" && "border-emerald-500/35 bg-emerald-950/30",
+          kind === "semi_trustworthy" && "border-sky-500/35 bg-sky-950/25",
+          kind === "medium_trust" && "border-amber-500/30 bg-amber-950/20",
+          kind === "untrustworthy" && "border-red-500/30 bg-red-950/25"
+        )}
+      >
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">
+          Trustworthiness
+        </p>
+        <p className="mt-0.5 text-[10px] tabular-nums text-gray-500">
+          Score <span className="font-semibold text-gray-300">{trustPoints}</span>
+        </p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+          {kind === "trustworthy" && (
+            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
+          )}
+          {kind === "semi_trustworthy" && (
+            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden />
+          )}
+          {kind === "medium_trust" && (
+            <Clock className="h-3.5 w-3.5 shrink-0 text-amber-400/90" aria-hidden />
+          )}
+          {kind === "untrustworthy" && (
+            <Clock className="h-3.5 w-3.5 shrink-0 text-red-400/90" aria-hidden />
+          )}
+          <span
+            className={cn(
+              "text-xs font-semibold",
+              kind === "trustworthy" && "text-emerald-300",
+              kind === "semi_trustworthy" && "text-sky-200",
+              kind === "medium_trust" && "text-amber-300/95",
+              kind === "untrustworthy" && "text-red-300/95"
+            )}
+          >
+            {label}
+          </span>
+        </div>
+      </div>
+      {verifiedBy > 0 && (
+        <p className="text-[10px] text-gray-500">
+          {verifiedBy} community confirmation{verifiedBy === 1 ? "" : "s"}
+        </p>
+      )}
+    </div>
+  );
+}
 
 const COLLAPSED_H = 52;
 
@@ -79,6 +141,10 @@ export default function IncidentFeed({
   onOpenReporterProfile,
   currentUserId,
   onDeleteReport,
+  onlyMine = false,
+  onOnlyMineChange,
+  totalBeforeMineFilter = 0,
+  onVoteReport,
   collapsedLabel = "Incident Feed",
   sheetTitle = "Incident Feed",
   reserveTopPx = 0,
@@ -185,11 +251,45 @@ export default function IncidentFeed({
 
       {/* ── Header (only when open) ───────────────────────────── */}
       {isOpen && (
-        <div className="flex items-center justify-between px-5 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-3">
           <h2 className="text-lg font-bold text-gray-100">{sheetTitle}</h2>
-          <div className="flex items-center gap-1.5 text-xs text-gray-400">
-            <Zap className="h-3 w-3 text-radiant-green" />
-            Community
+          <div className="flex flex-wrap items-center gap-2">
+            {currentUserId && onOnlyMineChange && (
+              <div
+                className="flex items-center rounded-lg border border-radiant-border bg-radiant-card/80 p-0.5"
+                role="group"
+                aria-label="Report scope"
+              >
+                <button
+                  type="button"
+                  onClick={() => onOnlyMineChange(false)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                    !onlyMine
+                      ? "bg-radiant-red/90 text-white shadow-sm"
+                      : "text-gray-400 hover:text-gray-200"
+                  )}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOnlyMineChange(true)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                    onlyMine
+                      ? "bg-radiant-red/90 text-white shadow-sm"
+                      : "text-gray-400 hover:text-gray-200"
+                  )}
+                >
+                  Mine
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 text-xs text-gray-400">
+              <Zap className="h-3 w-3 text-radiant-green" />
+              Community
+            </div>
           </div>
         </div>
       )}
@@ -199,7 +299,9 @@ export default function IncidentFeed({
         <div className="flex-1 overflow-y-auto px-5 pb-6">
           {sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-500">
-              No reports yet. Sign up as an 18+ verified user and use the quick-report button (bottom-right).
+              {onlyMine && totalBeforeMineFilter > 0
+                ? "You don’t have any reports yet. Use the quick-report button (bottom-right) to file one."
+                : "No reports yet. Sign up as an 18+ verified user and use the quick-report button (bottom-right)."}
             </p>
           ) : (
             <div className="flex flex-col gap-3">
@@ -211,6 +313,7 @@ export default function IncidentFeed({
                   onOpenReporterProfile={onOpenReporterProfile}
                   currentUserId={currentUserId}
                   onDeleteReport={onDeleteReport}
+                  onVoteReport={onVoteReport}
                   nowMs={nowMs}
                 />
               ))}
@@ -242,6 +345,7 @@ function IncidentCard({
   onOpenReporterProfile,
   currentUserId,
   onDeleteReport,
+  onVoteReport,
   nowMs,
 }: {
   report: UserReport;
@@ -249,10 +353,33 @@ function IncidentCard({
   onOpenReporterProfile?: (reporterId: string, displayName: string) => void;
   currentUserId?: string | null;
   onDeleteReport?: (reportId: string) => void;
+  onVoteReport?: (reportId: string, direction: "up" | "down") => Promise<void>;
   nowMs: number | null;
 }) {
   const canDelete =
     Boolean(onDeleteReport) && isReportOwnedBy(report, currentUserId);
+  const isOwnReport = isReportOwnedBy(report, currentUserId);
+  const canVote = Boolean(
+    onVoteReport && currentUserId && !isOwnReport
+  );
+  const [voteBusy, setVoteBusy] = useState(false);
+
+  const voteTitleHint =
+    !currentUserId
+      ? "Sign in to vote"
+      : isOwnReport
+        ? "You can’t vote on your own report"
+        : undefined;
+
+  const handleVote = async (direction: "up" | "down") => {
+    if (!onVoteReport || !canVote || voteBusy) return;
+    setVoteBusy(true);
+    try {
+      await onVoteReport(report.id, direction);
+    } finally {
+      setVoteBusy(false);
+    }
+  };
 
   const handleDelete = () => {
     if (!canDelete || !onDeleteReport) return;
@@ -349,64 +476,41 @@ function IncidentCard({
           ) : (
             <p className="mt-2 text-xs leading-relaxed text-gray-300">{report.description}</p>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {(() => {
-              const kind = getTrustDisplayKind(report.trustPoints);
-              if (kind === "trustworthy") {
-                return (
-                  <>
-                    <CheckCircle className="h-3 w-3 shrink-0 text-emerald-400" />
-                    <span className="text-xs font-medium text-emerald-300">
-                      Trustworthy
-                    </span>
-                  </>
-                );
-              }
-              if (kind === "semi_trustworthy") {
-                return (
-                  <>
-                    <CheckCircle className="h-3 w-3 shrink-0 text-sky-400" />
-                    <span className="text-xs font-medium text-sky-200">
-                      Semi-trustworthy
-                    </span>
-                  </>
-                );
-              }
-              if (kind === "medium_trust") {
-                return (
-                  <>
-                    <Clock className="h-3 w-3 shrink-0 text-amber-400/90" />
-                    <span className="text-xs font-medium text-amber-300/90">
-                      Medium trust
-                    </span>
-                  </>
-                );
-              }
-              return (
-                <>
-                  <Clock className="h-3 w-3 shrink-0 text-red-400/90" />
-                  <span className="text-xs font-medium text-red-300/90">
-                    Untrustworthy
-                  </span>
-                </>
-              );
-            })()}
-            {report.verifiedBy > 0 && (
-              <span className="text-[10px] text-gray-500">
-                · {report.verifiedBy} confirmations
-              </span>
-            )}
-          </div>
+          <TrustworthinessRow
+            trustPoints={report.trustPoints}
+            trustLabel={report.trustLabel}
+            verifiedBy={report.verifiedBy}
+          />
         </div>
         <span className="shrink-0 text-xs text-gray-500">
-          {nowMs == null ? "" : timeAgo(report.createdAt, nowMs)}
+          {nowMs == null ? "" : formatReportRelativeAge(report.createdAt, nowMs)}
         </span>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <VoteButton icon={ThumbsUp}   count={report.upvotes} />
-          <VoteButton icon={ThumbsDown} count={report.downvotes} />
+          <VoteButton
+            icon={ThumbsUp}
+            count={report.upvotes}
+            label="Upvote"
+            disabled={!canVote}
+            busy={voteBusy}
+            titleHint={voteTitleHint}
+            active={report.myVote === "up"}
+            isUp
+            onClick={() => void handleVote("up")}
+          />
+          <VoteButton
+            icon={ThumbsDown}
+            count={report.downvotes}
+            label="Downvote"
+            disabled={!canVote}
+            busy={voteBusy}
+            titleHint={voteTitleHint}
+            active={report.myVote === "down"}
+            isUp={false}
+            onClick={() => void handleVote("down")}
+          />
         </div>
         <div className="flex items-center gap-2">
           {canDelete && (
@@ -434,9 +538,56 @@ function IncidentCard({
   );
 }
 
-function VoteButton({ icon: Icon, count }: { icon: typeof ThumbsUp; count: number }) {
+function VoteButton({
+  icon: Icon,
+  count,
+  label,
+  disabled,
+  busy,
+  titleHint,
+  active,
+  isUp,
+  onClick,
+}: {
+  icon: typeof ThumbsUp;
+  count: number;
+  label: string;
+  disabled: boolean;
+  busy: boolean;
+  /** When set and the button is disabled, shown as tooltip instead of “Sign in”. */
+  titleHint?: string;
+  active: boolean;
+  isUp: boolean;
+  onClick: () => void;
+}) {
+  const title = busy
+    ? label
+    : disabled && titleHint
+      ? titleHint
+      : disabled
+        ? "Sign in to vote"
+        : label;
   return (
-    <button className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-2.5 py-1 text-xs text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200">
+    <button
+      type="button"
+      title={title}
+      disabled={disabled || busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+        disabled
+          ? "cursor-not-allowed border-radiant-border/60 text-gray-600 opacity-70"
+          : active && isUp
+            ? "border-emerald-500/70 bg-emerald-950/40 text-emerald-200 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]"
+            : active && !isUp
+              ? "border-red-500/70 bg-red-950/40 text-red-200 shadow-[0_0_0_1px_rgba(248,113,113,0.12)]"
+              : "border-radiant-border text-gray-400 hover:border-gray-500 hover:text-gray-200",
+        busy && "opacity-70"
+      )}
+    >
       <Icon className="h-3 w-3" />
       {count}
     </button>

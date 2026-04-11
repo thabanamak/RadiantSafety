@@ -71,7 +71,14 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { insertUserReport } from "@/lib/supabase-user-reports";
+import {
+  deleteUserReport,
+  fetchUserReports,
+  insertUserReport,
+  mergeUserReports,
+  toggleUserReportVote,
+} from "@/lib/supabase-user-reports";
+import { computeTrustPoints, getTrustDisplayText } from "@/lib/report-trust";
 
 interface VicPolIncident {
   id: string;
@@ -173,8 +180,112 @@ export default function Dashboard() {
 
   const [supabaseItems, setSupabaseItems] = useState<SupabaseIncident[]>([]);
 
-  /** In-session user submissions (Quick Report); shown under User Reported + search. */
+  /** Loaded from `user_reports` + any optimistic rows not yet in DB. */
   const [submittedUserReports, setSubmittedUserReports] = useState<UserReport[]>([]);
+  const [userReportsHydrated, setUserReportsHydrated] = useState(false);
+  /** User-reported sheet: show only rows filed by the signed-in user. */
+  const [showOnlyMyUserReports, setShowOnlyMyUserReports] = useState(false);
+
+  useEffect(() => {
+    if (!authUser?.id) setShowOnlyMyUserReports(false);
+  }, [authUser?.id]);
+
+  const displayedUserReports = useMemo(() => {
+    if (!showOnlyMyUserReports || !authUser?.id) return submittedUserReports;
+    const uid = authUser.id.trim().toLowerCase();
+    return submittedUserReports.filter((r) => {
+      const rid = (r.reporterId || r.userId || "").trim().toLowerCase();
+      return rid === uid;
+    });
+  }, [submittedUserReports, showOnlyMyUserReports, authUser?.id]);
+
+  const loadUserReports = useCallback(async () => {
+    const { client } = getSupabaseBrowserClient();
+    if (!client) {
+      setUserReportsHydrated(true);
+      return;
+    }
+    const self =
+      authUser?.id != null
+        ? { id: authUser.id, name: authUser.name ?? "" }
+        : null;
+    const rows = await fetchUserReports(client, { self });
+    setSubmittedUserReports((prev) => mergeUserReports(rows, prev));
+    setUserReportsHydrated(true);
+  }, [authUser?.id, authUser?.name]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await loadUserReports();
+      if (cancelled) return;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadUserReports]);
+
+  // Realtime: merge vote/trust changes on `user_reports` (and drop rows removed by DB triggers).
+  useEffect(() => {
+    const { client } = getSupabaseBrowserClient();
+    if (!client) return;
+    const channel = client
+      .channel("user_reports_votes_realtime")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "user_reports" },
+        (payload) => {
+          const row = payload.new as {
+            id?: string;
+            upvotes?: number;
+            downvotes?: number;
+            trust?: number;
+            trust_label?: string | null;
+          };
+          if (
+            !row?.id ||
+            typeof row.upvotes !== "number" ||
+            typeof row.downvotes !== "number"
+          ) {
+            return;
+          }
+          const trustPoints =
+            typeof row.trust === "number" && Number.isFinite(row.trust)
+              ? row.trust
+              : computeTrustPoints(row.upvotes, row.downvotes);
+          const trustLabel =
+            typeof row.trust_label === "string" && row.trust_label.trim() !== ""
+              ? row.trust_label
+              : getTrustDisplayText(trustPoints);
+          setSubmittedUserReports((prev) =>
+            prev.map((r) =>
+              r.id === row.id
+                ? {
+                    ...r,
+                    upvotes: row.upvotes,
+                    downvotes: row.downvotes,
+                    trustPoints,
+                    trustLabel,
+                  }
+                : r
+            )
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "user_reports" },
+        (payload) => {
+          const oldRow = payload.old as { id?: string };
+          if (!oldRow?.id) return;
+          setSubmittedUserReports((prev) => prev.filter((r) => r.id !== oldRow.id));
+        }
+      )
+      .subscribe();
+    return () => {
+      void client.removeChannel(channel);
+    };
+  }, []);
 
   // Location pin state — shared between FAB and map
   const [dropPinMode, setDropPinMode] = useState(false);
@@ -355,16 +466,6 @@ export default function Dashboard() {
     router.replace("/", { scroll: false });
   }, [router]);
 
-  const handleViewPastReports = useCallback(() => {
-    setActiveIncidentTab("user-reported");
-    setFlyTarget(null);
-    requestAnimationFrame(() => {
-      document
-        .getElementById("user-reported-panel")
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }, []);
-
   const loadVicPol = useCallback(async () => {
     if (vicpolLoading || vicpolLoaded) return;
     setVicpolLoaded(true);
@@ -455,6 +556,7 @@ export default function Dashboard() {
           : `report-${Date.now()}`;
 
       const { client } = getSupabaseBrowserClient();
+      let inserted = false;
       if (client) {
         const result = await insertUserReport(client, {
           category: payload.category,
@@ -465,6 +567,7 @@ export default function Dashboard() {
         });
         if (result.id) {
           id = result.id;
+          inserted = true;
         } else {
           console.warn(
             "[RadiantSafety] user_reports insert skipped or failed:",
@@ -473,40 +576,84 @@ export default function Dashboard() {
         }
       }
 
-      const rid = authUser.id ?? authUser.email;
-      const rname = authUser.name;
-      const report: UserReport = {
-        id,
-        latitude: payload.location.latitude,
-        longitude: payload.location.longitude,
-        trustPoints: 10,
-        category: payload.category,
-        description: payload.description.trim() || "(No description)",
-        imageDataUrl: payload.imageDataUrl ?? null,
-        verifiedBy: 0,
-        upvotes: 0,
-        downvotes: 0,
-        createdAt: new Date(),
-        userId: rid,
-        reporterId: rid,
-        reporterDisplayName: rname,
-      };
-      setSubmittedUserReports((prev) => [report, ...prev]);
+      if (inserted) {
+        await loadUserReports();
+      } else {
+        const rid = authUser.id ?? authUser.email;
+        const rname = authUser.name;
+        const report: UserReport = {
+          id,
+          latitude: payload.location.latitude,
+          longitude: payload.location.longitude,
+          trustPoints: 10,
+          trustLabel: getTrustDisplayText(10),
+          myVote: null,
+          category: payload.category,
+          description: payload.description.trim() || "(No description)",
+          imageDataUrl: payload.imageDataUrl ?? null,
+          verifiedBy: 0,
+          upvotes: 0,
+          downvotes: 0,
+          createdAt: new Date(),
+          userId: rid,
+          reporterId: rid,
+          reporterDisplayName: rname,
+        };
+        setSubmittedUserReports((prev) => mergeUserReports([report], prev));
+      }
       setActiveIncidentTab("user-reported");
       setFlyTarget({
-        latitude: report.latitude,
-        longitude: report.longitude,
+        latitude: payload.location.latitude,
+        longitude: payload.location.longitude,
         zoom: 16,
       });
     },
-    [authUser, router]
+    [authUser, router, loadUserReports]
   );
 
-  const handleDeleteReport = useCallback((reportId: string) => {
-    setSubmittedUserReports((prev) => prev.filter((r) => r.id !== reportId));
-  }, []);
+  const handleDeleteReport = useCallback(
+    async (reportId: string) => {
+      const { client } = getSupabaseBrowserClient();
+      if (client) {
+        const result = await deleteUserReport(client, reportId);
+        if (!result.ok) {
+          console.warn("[RadiantSafety] user_reports delete failed:", result.error);
+          return;
+        }
+      }
+      setSubmittedUserReports((prev) => prev.filter((r) => r.id !== reportId));
+    },
+    []
+  );
 
-  const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
+  const handleVoteReport = useCallback(
+    async (reportId: string, direction: "up" | "down") => {
+      const { client } = getSupabaseBrowserClient();
+      if (!client) return;
+      const result = await toggleUserReportVote(client, reportId, direction);
+      if (!result.ok) {
+        console.warn("[RadiantSafety] user_reports vote failed:", result.error);
+        return;
+      }
+      setSubmittedUserReports((prev) =>
+        prev.map((r) =>
+          r.id === reportId
+            ? {
+                ...r,
+                upvotes: result.upvotes,
+                downvotes: result.downvotes,
+                trustPoints: result.trust,
+                trustLabel: result.trustLabel,
+                myVote: result.myVote,
+              }
+            : r
+        )
+      );
+    },
+    []
+  );
+
+  const userReportedMapPoints: MapIncidentPoint[] = displayedUserReports.map((r) => ({
     id: r.id,
     latitude: r.latitude,
     longitude: r.longitude,
@@ -993,7 +1140,6 @@ export default function Dashboard() {
           onIncidentTabChange={setActiveIncidentTab}
           onSearchSelectArea={handleSelectArea}
           onLogout={handleLogout}
-          onViewPastReports={handleViewPastReports}
           directionsMode={directionsMode}
           onDirectionsModeChange={(active) => {
             setDirectionsMode(active);
@@ -1025,15 +1171,19 @@ export default function Dashboard() {
         ) : (
           <div id="user-reported-panel" className="pointer-events-auto">
             <IncidentFeed
-              reports={submittedUserReports}
+              reports={displayedUserReports}
               onViewMap={handleViewMap}
               onOpenReporterProfile={(id, name) => setReporterProfile({ id, name })}
               currentUserId={authUser?.id ?? null}
               onDeleteReport={handleDeleteReport}
+              onVoteReport={handleVoteReport}
+              onlyMine={showOnlyMyUserReports}
+              onOnlyMineChange={setShowOnlyMyUserReports}
+              totalBeforeMineFilter={submittedUserReports.length}
               reserveTopPx={220}
               collapsedLabel={
-                submittedUserReports.length > 0
-                  ? `User reports (${submittedUserReports.length})`
+                displayedUserReports.length > 0
+                  ? `User reports (${displayedUserReports.length})`
                   : "User reports"
               }
               sheetTitle="User-reported incidents"
@@ -1042,7 +1192,9 @@ export default function Dashboard() {
         )}
 
         {/* User Reported empty state — only when nothing submitted this session */}
-        {activeIncidentTab === "user-reported" && submittedUserReports.length === 0 && (
+        {activeIncidentTab === "user-reported" &&
+          userReportsHydrated &&
+          submittedUserReports.length === 0 && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-radiant-border bg-radiant-surface/90 px-6 py-5 text-center shadow-xl backdrop-blur-xl">
               <span className="text-2xl">📍</span>
