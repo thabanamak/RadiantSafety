@@ -31,8 +31,6 @@ export default function SOSResponderHandshakeModal({
 
   const status = alert.status ?? "pending";
   const isAssignee = Boolean(authUserId && alert.responder_id === authUserId);
-  /** Until resolved, any verified responder can accept again (re-assigns responder_id). */
-  const showAcceptTask = status === "pending" || status === "accepted";
   const issue = alert.issue as SOSIssueType;
   const title = SOS_ISSUE_LABELS[issue]?.title ?? "SOS";
 
@@ -65,6 +63,17 @@ export default function SOSResponderHandshakeModal({
           </button>
         </div>
 
+        {alert.photo_url && (
+          <div className="mb-3 overflow-hidden rounded-xl border border-white/10">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={alert.photo_url}
+              alt="SOS scene photo"
+              className="max-h-48 w-full object-cover"
+            />
+          </div>
+        )}
+
         {alert.description && (
           <p className="mb-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-gray-300">
             {alert.description}
@@ -84,11 +93,14 @@ export default function SOSResponderHandshakeModal({
         )}
 
         <div className="flex flex-col gap-2">
-          {showAcceptTask && (
+          {(status === "pending" || (status === "accepted" && !isAssignee)) && (
             <button
               type="button"
               disabled={accepting}
-              onClick={() => void onAccept(alert.id)}
+              onClick={async () => {
+                const ok = await onAccept(alert.id);
+                if (ok) onClose();
+              }}
               className={cn(
                 "flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition-colors",
                 "bg-red-600 hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
