@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Loader2, Mail } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { isEmailLinkCallback } from "@/lib/auth-callback-url";
 import type { User } from "@supabase/supabase-js";
 import { isEmailConfirmed } from "@/lib/supabase-user";
 import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
@@ -45,24 +44,25 @@ function WaitingContent() {
       return;
     }
 
+    void client.auth.getSession().then(({ data: { session } }) => {
+      const user = session?.user;
+      if (user && isEmailConfirmed(user)) {
+        void goToDashboardWithWelcome(user);
+      }
+    });
+
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
       const user = session?.user;
       if (!user || !isEmailConfirmed(user)) return;
 
-      // Do not redirect from a stale session restored on load (INITIAL_SESSION) unless
-      // this page load includes tokens from the confirmation email link.
-      if (event === "INITIAL_SESSION" && !isEmailLinkCallback()) {
-        return;
-      }
-
-      // After the user opens the email link, Supabase emits SIGNED_IN, or INITIAL_SESSION
-      // when this load includes tokens in the URL. Do not use TOKEN_REFRESHED / polling /
-      // getUser() on mount — those can fire for an old session and skip the email step.
+      // Email confirmation may deliver INITIAL_SESSION after the URL is cleaned, or SIGNED_IN
+      // after PKCE — do not require tokens still present in the address bar.
       if (
         event === "SIGNED_IN" ||
-        (event === "INITIAL_SESSION" && isEmailLinkCallback())
+        event === "INITIAL_SESSION" ||
+        event === "TOKEN_REFRESHED"
       ) {
         void goToDashboardWithWelcome(user);
       }

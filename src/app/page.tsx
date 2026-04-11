@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isEmailLinkCallback } from "@/lib/auth-callback-url";
-import { isEmailConfirmed } from "@/lib/supabase-user";
+import type { Session } from "@supabase/supabase-js";
 import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
 import { setStoredUser } from "@/lib/auth-storage";
 import RadiantMap from "@/components/RadiantMap";
@@ -33,57 +33,6 @@ function reputationForAuthUser(user: AuthUser): UserReputation {
     label: score >= 70 ? "Trusted" : "Community",
     isTrusted: score >= 70,
   };
-}
-
-/** After the user opens the confirmation link, Supabase sends them to `/?welcome=1` — sync storage and UI immediately. */
-function EmailConfirmSync({
-  onConfirmed,
-}: {
-  onConfirmed: (user: AuthUser) => void;
-}) {
-  const router = useRouter();
-  const finished = useRef(false);
-
-  useEffect(() => {
-    const { client, error } = getSupabaseBrowserClient();
-    if (error || !client) return;
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((event, session) => {
-      const user = session?.user;
-      if (!user || !isEmailConfirmed(user)) return;
-      if (event === "INITIAL_SESSION" && !isEmailLinkCallback()) return;
-      if (
-        event !== "SIGNED_IN" &&
-        !(event === "INITIAL_SESSION" && isEmailLinkCallback())
-      ) {
-        return;
-      }
-      if (finished.current) return;
-      void (async () => {
-        try {
-          const authUser = await syncProfileFromAuthUser(client, user);
-          if (finished.current) return;
-          finished.current = true;
-          setStoredUser(authUser);
-          onConfirmed(authUser);
-          if (
-            typeof window !== "undefined" &&
-            (isEmailLinkCallback() || window.location.hash)
-          ) {
-            router.replace("/?welcome=1", { scroll: false });
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      })();
-    });
-
-    return () => subscription.unsubscribe();
-  }, [onConfirmed, router]);
-
-  return null;
 }
 
 function WelcomeBanner({ authUser }: { authUser: AuthUser | null }) {
@@ -146,32 +95,62 @@ export default function Dashboard() {
     }
   }, [pathname]);
 
-  /** Re-sync profile from Supabase so UI never shows another user’s cached name (e.g. old localStorage). */
+  /**
+   * Session + profile: subscribe so PKCE / email-confirm completes after first getSession()
+   * (avoids racing a one-shot getSession and clearing storage before tokens exchange).
+   */
   useEffect(() => {
     if (pathname !== "/") return;
     let cancelled = false;
-    void (async () => {
-      const { client, error } = getSupabaseBrowserClient();
-      if (error || !client) return;
-      const {
-        data: { session },
-      } = await client.auth.getSession();
+    const { client, error } = getSupabaseBrowserClient();
+    if (error || !client) return;
+
+    async function applySession(session: Session | null) {
+      if (cancelled) return;
       if (!session?.user) {
+        if (
+          typeof window !== "undefined" &&
+          isEmailLinkCallback()
+        ) {
+          return;
+        }
         if (getStoredUser()?.id) {
           clearStoredUser();
-          if (!cancelled) setAuthUser(null);
+          setAuthUser(null);
         }
         return;
       }
-      const u = await syncProfileFromAuthUser(client, session.user);
-      if (cancelled) return;
-      setStoredUser(u);
-      setAuthUser(u);
-    })();
+      try {
+        const u = await syncProfileFromAuthUser(client, session.user);
+        if (cancelled) return;
+        setStoredUser(u);
+        setAuthUser(u);
+        if (
+          typeof window !== "undefined" &&
+          (isEmailLinkCallback() || window.location.hash.length > 1)
+        ) {
+          router.replace("/?welcome=1", { scroll: false });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    void client.auth
+      .getSession()
+      .then(({ data: { session } }) => applySession(session));
+
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((_event, session) => {
+      void applySession(session);
+    });
+
     return () => {
       cancelled = true;
+      subscription.unsubscribe();
     };
-  }, [pathname]);
+  }, [pathname, router]);
 
   const [newsLoaded, setNewsLoaded] = useState(false);
   const [newsLoading, setNewsLoading] = useState(false);
@@ -243,8 +222,6 @@ export default function Dashboard() {
       </div>
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        <EmailConfirmSync onConfirmed={setAuthUser} />
-
         <Suspense fallback={null}>
           <WelcomeBanner authUser={authUser} />
         </Suspense>

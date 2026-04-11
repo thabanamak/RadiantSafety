@@ -15,8 +15,7 @@ type AuthMode = "login" | "signup";
 interface AuthFormProps {
   mode: AuthMode;
   /**
-   * Called after a successful log in with a confirmed email only.
-   * Sign-up never uses this — users verify via email (confirmation link to home) or sign in on the login page.
+   * Called after a successful password log in. Email verification is enforced on sign-up only (waiting page + link), not here.
    */
   onAuthenticated?: (user: AuthUser) => void;
 }
@@ -80,6 +79,14 @@ export default function AuthForm({ mode, onAuthenticated }: AuthFormProps) {
           return;
         }
 
+        const user = data.user;
+
+        // Create `profiles` while we still have a session (RLS usually requires auth.uid()).
+        // Row includes upvotes/downvotes at 0; reputation is generated in the database.
+        if (data.session && user) {
+          await syncProfileFromAuthUser(client, user);
+        }
+
         // Never treat sign-up as "signed in" — clear any session Supabase may have created
         // (e.g. when Confirm email is off) so the user only becomes signed in after the
         // verification link is used (dashboard) or they log in explicitly (/login).
@@ -87,7 +94,6 @@ export default function AuthForm({ mode, onAuthenticated }: AuthFormProps) {
           await client.auth.signOut();
         }
 
-        const user = data.user;
         const confirmedInDb = Boolean(user && isEmailConfirmed(user));
 
         if (confirmedInDb && user) {
@@ -108,27 +114,13 @@ export default function AuthForm({ mode, onAuthenticated }: AuthFormProps) {
       });
 
       if (error) {
-        const code = (error as { code?: string }).code;
-        const msg = error.message ?? "";
-        if (
-          code === "email_not_confirmed" ||
-          /email.*not.*confirm|not.*confirmed|confirm.*email/i.test(msg)
-        ) {
-          router.replace(waitingHref);
-          return;
-        }
-        setErrorMessage(msg);
+        setErrorMessage(error.message ?? "Sign-in failed.");
         return;
       }
 
       const u = data.user;
       if (!u?.email) {
         setErrorMessage("Sign-in succeeded but no user email was returned.");
-        return;
-      }
-
-      if (!isEmailConfirmed(u)) {
-        router.replace(waitingHref);
         return;
       }
 
