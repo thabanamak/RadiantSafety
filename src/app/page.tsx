@@ -1385,7 +1385,7 @@ export default function Dashboard() {
         </div>
 
         {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-0 top-[148px] z-[110] hidden w-[200px] lg:block">
+          <div className="pointer-events-auto absolute right-0 top-[76px] z-[110] hidden w-[200px] lg:block">
             <AreaIncidentSummary
               center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
               vicpolItems={vicpolItems}

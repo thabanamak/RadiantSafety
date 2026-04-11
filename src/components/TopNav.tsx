@@ -476,22 +476,25 @@ function AccountDropdown({
         position: "fixed",
         top: menuPos.top,
         right: menuPos.right,
-        width: 288,
+        width: 173,
       }}
       className="z-[10050] rounded-xl border border-radiant-border bg-radiant-surface/98 p-1.5 shadow-2xl backdrop-blur-xl"
     >
-      <div className="space-y-2.5 px-3 py-3">
-        <p className="truncate text-xs font-medium text-gray-100" title={user.email}>
-          {user.email}
-        </p>
-        <div>
+      <div className="space-y-1.5 px-3 py-2">
+        <p className="truncate text-xs font-medium text-gray-100">{user.name}</p>
+        <div className="flex flex-col gap-1">
           {isResponder ? (
-            <span className="inline-flex rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+            <span className="inline-flex w-fit rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-400">
               Verified Responder
             </span>
           ) : (
-            <span className="inline-flex rounded-full bg-gray-600/40 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-300">
+            <span className="inline-flex w-fit rounded-full bg-gray-600/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-300">
               Standard User
+            </span>
+          )}
+          {user.over18Verified && (
+            <span className="inline-flex w-fit rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+              18+ verified
             </span>
           )}
         </div>
@@ -567,7 +570,7 @@ function AccountDropdown({
         type="button"
         onClick={() => setOpen((p) => !p)}
         className={cn(
-          "flex items-center gap-1 rounded-full border border-radiant-border p-1 pr-2 transition-colors hover:border-gray-500",
+          "flex items-center gap-1 rounded-full border border-radiant-border p-1 transition-colors hover:border-gray-500",
           open && "border-gray-500"
         )}
         aria-expanded={open}
@@ -576,14 +579,6 @@ function AccountDropdown({
       >
         <span className="flex h-8 w-8 items-center justify-center rounded-full bg-radiant-red/15 text-radiant-red">
           <UserCircle className="h-5 w-5" strokeWidth={1.75} />
-        </span>
-        <span className="hidden items-center gap-2 text-xs font-medium text-gray-300 lg:flex">
-          {user.name}
-          {user.over18Verified && (
-            <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-400">
-              ✓
-            </span>
-          )}
         </span>
         <ChevronDown
           className={cn(
