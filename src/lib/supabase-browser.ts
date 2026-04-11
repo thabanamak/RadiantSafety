@@ -14,7 +14,8 @@ export function getSupabaseBrowser(): SupabaseClient {
 
   if (!url || !key) {
     throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY must be set."
+      "Supabase browser client needs NEXT_PUBLIC_SUPABASE_ANON_KEY and a project URL. " +
+        "Set NEXT_PUBLIC_SUPABASE_URL, or SUPABASE_URL (mirrored in next.config) — then restart `next dev`."
     );
   }
 

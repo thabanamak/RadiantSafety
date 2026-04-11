@@ -41,7 +41,7 @@ export default function ContextualDirectionsCards({
     return (
       <div
         className={cn(
-          "pointer-events-auto fixed bottom-24 left-1/2 z-[60] w-[min(100%-1.5rem,28rem)] -translate-x-1/2",
+          "pointer-events-auto fixed bottom-[calc(6rem+env(safe-area-inset-bottom,0px))] left-1/2 z-[60] w-[min(100%-1.5rem,28rem)] max-w-[calc(100vw-1.5rem)] -translate-x-1/2",
           "sm:bottom-28"
         )}
       >
@@ -67,7 +67,7 @@ export default function ContextualDirectionsCards({
   return (
     <div
       className={cn(
-        "pointer-events-auto fixed bottom-24 left-1/2 z-[60] w-[min(100%-1.5rem,28rem)] -translate-x-1/2",
+        "pointer-events-auto fixed bottom-[calc(6rem+env(safe-area-inset-bottom,0px))] left-1/2 z-[60] w-[min(100%-1.5rem,28rem)] max-w-[calc(100vw-1.5rem)] -translate-x-1/2",
         "sm:bottom-28"
       )}
     >
