@@ -94,7 +94,17 @@ export default function RouteLocationField({
       if (!token) return;
       setLoading(true);
       try {
-        const loc = await searchboxRetrieve(s.mapbox_id, token, sessionTokenRef.current);
+        const proximity = mapCenter
+          ? `${mapCenter.longitude},${mapCenter.latitude}`
+          : MELB_CBD_PROXIMITY;
+        const fallbackQuery = s.place_formatted ? `${s.name}, ${s.place_formatted}` : s.name;
+        const loc = await searchboxRetrieve(
+          s.mapbox_id,
+          token,
+          sessionTokenRef.current,
+          fallbackQuery,
+          proximity
+        );
         sessionTokenRef.current = newSessionToken();
         if (!loc) return;
         const name = s.place_formatted
@@ -108,7 +118,7 @@ export default function RouteLocationField({
         setIsFocused(false);
       }
     },
-    [token, onChange]
+    [token, onChange, mapCenter]
   );
 
   return (

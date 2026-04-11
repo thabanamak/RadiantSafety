@@ -249,6 +249,8 @@ export default function RadiantMap({
   crimeIntensityFilter,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
+  const mapShellRef = useRef<HTMLDivElement>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const lastReportedCenterRef = useRef<{
     latitude: number;
     longitude: number;
@@ -318,6 +320,14 @@ export default function RadiantMap({
   useEffect(() => {
     syncCrimeLayerFilters();
   }, [syncCrimeLayerFilters, geojson]);
+
+  useEffect(
+    () => () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+    },
+    []
+  );
 
   /** Parent callback identity can churn; read latest without re-subscribing Map `onMove`. */
   const onCenterChangeRef = useRef(onCenterChange);
@@ -527,11 +537,25 @@ export default function RadiantMap({
   };
 
   const onMapLoad = useCallback(() => {
-    requestAnimationFrame(() => syncCrimeLayerFilters());
+    const map = mapRef.current?.getMap();
+    const shell = mapShellRef.current;
+    // Overlay / nav layout changes (e.g. TopNav moved) often resize the shell without a window
+    // `resize` event — Mapbox then draws a wrong-sized framebuffer and custom layers can vanish.
+    requestAnimationFrame(() => {
+      map?.resize();
+      syncCrimeLayerFilters();
+    });
+    if (!map || !shell || typeof ResizeObserver === "undefined") return;
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = new ResizeObserver(() => {
+      map.resize();
+      requestAnimationFrame(() => syncCrimeLayerFilters());
+    });
+    resizeObserverRef.current.observe(shell);
   }, [syncCrimeLayerFilters]);
 
   return (
-    <div className="relative h-full min-h-0 w-full">
+    <div ref={mapShellRef} className="relative h-full min-h-0 w-full">
     <Map
       ref={mapRef}
       initialViewState={initialViewState}

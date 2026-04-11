@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   Layers,
 } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import type { UserReputation } from "@/lib/types";
@@ -94,7 +94,7 @@ export default function TopNav({
   const [crimeLayerOpen, setCrimeLayerOpen] = useState(false);
 
   return (
-    <nav className="pointer-events-auto absolute inset-x-0 top-0 z-[100] flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
+    <nav className="pointer-events-auto absolute inset-x-0 top-0 z-[140] flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
       <div className="relative z-50 flex items-center gap-4 px-5 py-3">
         <div className="flex shrink-0 items-center gap-3">
           {user && (
@@ -498,19 +498,135 @@ function AccountDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const isResponder = Boolean(user.isResponder);
   const userId = user.id?.trim() ?? "";
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setMenuPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
   useEffect(() => {
+    if (!open) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (ref.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [open]);
+
+  const menuPanel = open && menuPos && (
+    <div
+      ref={menuRef}
+      role="menu"
+      style={{
+        position: "fixed",
+        top: menuPos.top,
+        right: menuPos.right,
+        width: 288,
+      }}
+      className="z-[300] rounded-xl border border-radiant-border bg-radiant-surface/98 p-1.5 shadow-2xl backdrop-blur-xl"
+    >
+      <div className="space-y-2.5 px-3 py-3">
+        <p className="truncate text-xs font-medium text-gray-100" title={user.email}>
+          {user.email}
+        </p>
+        <div>
+          {isResponder ? (
+            <span className="inline-flex rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+              Verified Responder
+            </span>
+          ) : (
+            <span className="inline-flex rounded-full bg-gray-600/40 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-300">
+              Standard User
+            </span>
+          )}
+        </div>
+        {!isResponder && userId ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setVerifyOpen(true);
+              setOpen(false);
+            }}
+            className="flex w-full items-center justify-center rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-200 transition-colors hover:border-sky-400/60 hover:bg-sky-500/20"
+          >
+            Verify as First Responder
+          </button>
+        ) : null}
+        {!isResponder && !userId ? (
+          <p className="text-[10px] leading-snug text-amber-400/90">
+            Your session has no user id yet (common in some embedded browsers). Refresh the page or open this app in
+            a normal browser window, then try again.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mx-2 mb-2 rounded-lg border border-radiant-border bg-radiant-card/80 px-3 py-2">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">Reputation</p>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="text-lg font-bold tabular-nums text-gray-100">{reputation.score}</span>
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              reputation.isTrusted
+                ? "bg-radiant-green/20 text-radiant-green"
+                : "bg-gray-600/40 text-gray-300"
+            )}
+          >
+            {reputation.label}
+          </span>
+        </div>
+      </div>
+
+      <div className="my-1 h-px bg-radiant-border" />
+
+      <Link
+        href="/profile"
+        role="menuitem"
+        onClick={() => setOpen(false)}
+        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-radiant-card hover:text-white"
+      >
+        <Settings className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+        Manage your profile
+      </Link>
+
+      <div className="my-1 h-px bg-radiant-border" />
+      <button
+        type="button"
+        onClick={() => {
+          void onLogout();
+          setOpen(false);
+        }}
+        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-400 transition-colors hover:bg-radiant-card hover:text-gray-200"
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        Log out
+      </button>
+    </div>
+  );
 
   return (
     <>
@@ -544,95 +660,8 @@ function AccountDropdown({
           )}
         />
       </button>
-
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-[110] mt-2 w-72 rounded-xl border border-radiant-border bg-radiant-surface/95 p-1.5 shadow-2xl backdrop-blur-xl"
-        >
-          <div className="space-y-2.5 px-3 py-3">
-            <p className="truncate text-xs font-medium text-gray-100" title={user.email}>
-              {user.email}
-            </p>
-            <div>
-              {isResponder ? (
-                <span className="inline-flex rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
-                  Verified Responder
-                </span>
-              ) : (
-                <span className="inline-flex rounded-full bg-gray-600/40 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-300">
-                  Standard User
-                </span>
-              )}
-            </div>
-            {!isResponder && userId ? (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setVerifyOpen(true);
-                  setOpen(false);
-                }}
-                className="flex w-full items-center justify-center rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-200 transition-colors hover:border-sky-400/60 hover:bg-sky-500/20"
-              >
-                Verify as First Responder
-              </button>
-            ) : null}
-            {!isResponder && !userId ? (
-              <p className="text-[10px] text-amber-400/90">
-                Sign in again to verify your account.
-              </p>
-            ) : null}
-          </div>
-
-          <div className="mx-2 mb-2 rounded-lg border border-radiant-border bg-radiant-card/80 px-3 py-2">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
-              Reputation
-            </p>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="text-lg font-bold tabular-nums text-gray-100">
-                {reputation.score}
-              </span>
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                  reputation.isTrusted
-                    ? "bg-radiant-green/20 text-radiant-green"
-                    : "bg-gray-600/40 text-gray-300"
-                )}
-              >
-                {reputation.label}
-              </span>
-            </div>
-          </div>
-
-          <div className="my-1 h-px bg-radiant-border" />
-
-          <Link
-            href="/profile"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-radiant-card hover:text-white"
-          >
-            <Settings className="h-3.5 w-3.5 shrink-0 text-gray-500" />
-            Manage your profile
-          </Link>
-
-          <div className="my-1 h-px bg-radiant-border" />
-          <button
-            type="button"
-            onClick={() => {
-              void onLogout();
-              setOpen(false);
-            }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-gray-400 transition-colors hover:bg-radiant-card hover:text-gray-200"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Log out
-          </button>
-        </div>
-      )}
     </div>
+    {typeof document !== "undefined" && menuPanel ? createPortal(menuPanel, document.body) : null}
     {userId ? (
       <ResponderVerifyModal
         open={verifyOpen}

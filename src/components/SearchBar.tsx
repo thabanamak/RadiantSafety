@@ -125,10 +125,18 @@ export default function SearchBar({ mapCenter, onSelectArea, endAdornment }: Sea
       setSelecting(true);
       setLoading(true);
       try {
+        const proximity = mapCenter
+          ? `${mapCenter.longitude},${mapCenter.latitude}`
+          : MELB_CBD_PROXIMITY;
+        const fallbackQuery = suggestion.place_formatted
+          ? `${suggestion.name}, ${suggestion.place_formatted}`
+          : suggestion.name;
         const loc = await searchboxRetrieve(
           suggestion.mapbox_id,
           token,
-          sessionTokenRef.current
+          sessionTokenRef.current,
+          fallbackQuery,
+          proximity
         );
         // Rotate session token now that this session (suggest+retrieve) is complete
         sessionTokenRef.current = newSessionToken();
@@ -150,7 +158,7 @@ export default function SearchBar({ mapCenter, onSelectArea, endAdornment }: Sea
         setLoading(false);
       }
     },
-    [token, onSelectArea, closeDropdown]
+    [token, onSelectArea, closeDropdown, mapCenter]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

@@ -1230,7 +1230,7 @@ export default function Dashboard() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
-        {/* Above TopNav (z-[100]) so edge rails stay clickable under the nav chrome */}
+        {/* Above map chrome; SOS rail z-[110] vs TopNav z-[140] — nav sits outside this pointer-events-none layer */}
         <div className="pointer-events-auto absolute left-0 top-[92px] z-[110]">
           <SOSController
             userCoords={userCoords}
@@ -1262,31 +1262,6 @@ export default function Dashboard() {
         <Suspense fallback={null}>
           <WelcomeBanner authUser={authUser} />
         </Suspense>
-
-        <TopNav
-          reputation={authUser ? reputationForAuthUser(authUser) : currentUser}
-          user={authUser}
-          mapCenter={mapCenter}
-          activeIncidentTab={activeIncidentTab}
-          onIncidentTabChange={setActiveIncidentTab}
-          onSearchSelectArea={handleSelectArea}
-          onLogout={handleLogout}
-          directionsMode={directionsMode}
-          onDirectionsModeChange={(active) => {
-            setDirectionsMode(active);
-            if (!active) setRouteStartCustom(null);
-            setRouteError(null);
-            setRouteInfo(null);
-          }}
-          showPoliceOnMap={showPoliceOnMap}
-          onShowPoliceOnMapChange={setShowPoliceOnMap}
-          showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
-          onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
-          routingActive={routingStatus !== "off"}
-          onAuthUserPatch={handleAuthUserPatch}
-          crimeIntensityFilter={crimeIntensityFilter}
-          onCrimeIntensityFilterChange={setCrimeIntensityFilter}
-        />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
         {activeIncidentTab === "official" ? (
@@ -1342,6 +1317,32 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* TopNav outside pointer-events-none overlay so account / “Verify as First Responder” stay clickable (Codespaces, embedded previews, stacked sheets). */}
+      <TopNav
+        reputation={authUser ? reputationForAuthUser(authUser) : currentUser}
+        user={authUser}
+        mapCenter={mapCenter}
+        activeIncidentTab={activeIncidentTab}
+        onIncidentTabChange={setActiveIncidentTab}
+        onSearchSelectArea={handleSelectArea}
+        onLogout={handleLogout}
+        directionsMode={directionsMode}
+        onDirectionsModeChange={(active) => {
+          setDirectionsMode(active);
+          if (!active) setRouteStartCustom(null);
+          setRouteError(null);
+          setRouteInfo(null);
+        }}
+        showPoliceOnMap={showPoliceOnMap}
+        onShowPoliceOnMapChange={setShowPoliceOnMap}
+        showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
+        onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
+        routingActive={routingStatus !== "off"}
+        onAuthUserPatch={handleAuthUserPatch}
+        crimeIntensityFilter={crimeIntensityFilter}
+        onCrimeIntensityFilterChange={setCrimeIntensityFilter}
+      />
 
       <QuickReportFAB
         onPinLocation={handlePinLocation}

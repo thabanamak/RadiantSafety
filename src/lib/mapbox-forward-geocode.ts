@@ -32,6 +32,14 @@ export interface RetrievedLocation {
   fullAddress: string;
 }
 
+function parseLngLat(raw: unknown): [number, number] | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const lng = Number(raw[0]);
+  const lat = Number(raw[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return [lng, lat];
+}
+
 /** Simple session token — must be the same across all suggest calls in one
  *  session AND the matching retrieve call. Regenerate after each retrieve. */
 export function newSessionToken(): string {
@@ -92,7 +100,9 @@ export async function searchboxSuggest(
 export async function searchboxRetrieve(
   mapboxId: string,
   token: string,
-  sessionToken: string
+  sessionToken: string,
+  fallbackQuery?: string,
+  proximity?: string
 ): Promise<RetrievedLocation | null> {
   if (!mapboxId || !token) return null;
 
@@ -104,7 +114,12 @@ export async function searchboxRetrieve(
 
   try {
     const res = await fetch(url.toString());
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (fallbackQuery?.trim()) {
+        return await geocodeFallback(fallbackQuery, token, proximity);
+      }
+      return null;
+    }
     const data = (await res.json()) as {
       features?: Array<{
         geometry: { coordinates: [number, number] };
@@ -113,15 +128,58 @@ export async function searchboxRetrieve(
     };
     const feature = data.features?.[0];
     if (!feature?.geometry) return null;
-    const raw = feature.geometry.coordinates;
-    if (!Array.isArray(raw) || raw.length < 2) return null;
-    const lng = Number(raw[0]);
-    const lat = Number(raw[1]);
-    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    const parsed = parseLngLat(feature.geometry.coordinates);
+    if (!parsed) return null;
     return {
-      coordinates: [lng, lat],
+      coordinates: parsed,
       name: feature.properties?.name ?? "",
       fullAddress: feature.properties?.full_address ?? "",
+    };
+  } catch {
+    if (fallbackQuery?.trim()) {
+      return geocodeFallback(fallbackQuery, token, proximity);
+    }
+    return null;
+  }
+}
+
+async function geocodeFallback(
+  query: string,
+  token: string,
+  proximity?: string
+): Promise<RetrievedLocation | null> {
+  const q = query.trim();
+  if (!q || !token) return null;
+
+  const url = new URL(
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+  );
+  url.searchParams.set("access_token", token);
+  url.searchParams.set("country", "au");
+  url.searchParams.set("bbox", VICTORIA_BBOX);
+  url.searchParams.set("language", "en");
+  url.searchParams.set("limit", "1");
+  if (proximity) {
+    url.searchParams.set("proximity", proximity);
+  }
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      features?: Array<{
+        center?: unknown;
+        text?: string;
+        place_name?: string;
+      }>;
+    };
+    const feature = data.features?.[0];
+    const coordinates = parseLngLat(feature?.center);
+    if (!coordinates) return null;
+    return {
+      coordinates,
+      name: feature?.text ?? "",
+      fullAddress: feature?.place_name ?? "",
     };
   } catch {
     return null;
