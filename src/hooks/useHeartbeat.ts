@@ -29,13 +29,13 @@ export function useHeartbeat({ coords, mode }: HeartbeatOptions): void {
 
   useEffect(() => {
     const ping = async () => {
-      const current = coordsRef.current;
-      if (!current) return;
-
-      const userId = getDeviceId();
-      if (!userId) return;
-
       try {
+        const current = coordsRef.current;
+        if (!current) return;
+
+        const userId = getDeviceId();
+        if (!userId) return;
+
         await fetch("/api/pulse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -47,12 +47,14 @@ export function useHeartbeat({ coords, mode }: HeartbeatOptions): void {
           }),
         });
       } catch {
-        // Heartbeat is best-effort — silently skip on network failure
+        // Heartbeat is best-effort — silently skip on network / server errors
       }
     };
 
-    ping(); // Immediate ping on mount / mode change
-    const id = setInterval(ping, INTERVALS[mode]);
+    void ping();
+    const id = setInterval(() => {
+      void ping();
+    }, INTERVALS[mode]);
     return () => clearInterval(id);
   }, [mode]); // Restarts with new interval when mode changes
 }

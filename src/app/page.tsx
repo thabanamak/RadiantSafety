@@ -9,7 +9,19 @@ import type { DroppedPin } from "@/components/RadiantMap";
 const RadiantMap = dynamic(() => import("@/components/RadiantMap"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-[#0a0a0a] text-sm text-gray-400">
+    <div
+      className="flex h-full min-h-0 w-full flex-1 items-center justify-center bg-[#0a0a0a] text-sm text-gray-400"
+      style={{
+        minHeight: "100%",
+        backgroundColor: "#0a0a0a",
+        color: "#9ca3af",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 14,
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
       Loading map…
     </div>
   ),
@@ -320,7 +332,6 @@ export default function Dashboard() {
     setGeolocationApiMissing(typeof navigator === "undefined" || !navigator.geolocation);
   }, []);
 
-  // Fly to user's location on first GPS fix
   useEffect(() => {
     if (userCoords && !hasCenteredOnUser.current) {
       setFlyTarget({ latitude: userCoords.latitude, longitude: userCoords.longitude, zoom: 15 });
@@ -1230,7 +1241,7 @@ export default function Dashboard() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
-        {/* Above map chrome; SOS rail z-[110] vs TopNav z-[140] — nav sits outside this pointer-events-none layer */}
+        {/* SOS / sheets rail — TopNav is portaled to document.body (z-[10000]) so Mapbox cannot cover it */}
         <div className="pointer-events-auto absolute left-0 top-[92px] z-[110]">
           <SOSController
             userCoords={userCoords}

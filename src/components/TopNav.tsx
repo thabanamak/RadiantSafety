@@ -92,10 +92,15 @@ export default function TopNav({
   onCrimeIntensityFilterChange,
 }: TopNavProps) {
   const [crimeLayerOpen, setCrimeLayerOpen] = useState(false);
+  /** Mapbox GL can promote the map above in-tree siblings; portal keeps chrome clickable. */
+  const [navPortaled, setNavPortaled] = useState(false);
+  useLayoutEffect(() => {
+    setNavPortaled(true);
+  }, []);
 
-  return (
-    <nav className="pointer-events-auto absolute inset-x-0 top-0 z-[140] flex flex-col bg-gradient-to-b from-black/85 via-black/60 to-transparent pb-4">
-      <div className="relative z-50 flex items-center gap-4 px-5 py-3">
+  const nav = (
+    <nav className="pointer-events-none fixed inset-x-0 top-0 z-[10000] flex flex-col bg-gradient-to-b from-black/70 via-black/40 to-transparent pb-4">
+      <div className="pointer-events-auto relative z-50 flex items-center gap-4 px-5 py-3">
         <div className="flex shrink-0 items-center gap-3">
           {user && (
             <>
@@ -150,8 +155,8 @@ export default function TopNav({
         </div>
       </div>
 
-      <div className="relative z-10 flex flex-col items-center gap-3 px-5">
-        <div className="flex w-full max-w-2xl flex-col gap-1.5">
+      <div className="pointer-events-none relative z-10 flex flex-col items-center gap-3 px-5">
+        <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-1.5">
           <SearchBar
             mapCenter={mapCenter}
             onSelectArea={onSearchSelectArea}
@@ -213,7 +218,7 @@ export default function TopNav({
 
         {/* Incident tab pills + collapsible crime layer filter */}
         {!routingActive && (
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
             <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-1 backdrop-blur-md shadow-lg transition-opacity duration-300">
               <button
                 type="button"
@@ -298,6 +303,8 @@ export default function TopNav({
       </div>
     </nav>
   );
+
+  return navPortaled ? createPortal(nav, document.body) : nav;
 }
 
 const RESPONDER_VERIFY_MIN_MS = 1500;
@@ -379,7 +386,7 @@ function ResponderVerifyModal({
 
   return createPortal(
     <div
-      className="pointer-events-auto fixed inset-0 z-[220] flex items-center justify-center p-4"
+      className="pointer-events-auto fixed inset-0 z-[10100] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="responder-verify-title"
@@ -546,7 +553,7 @@ function AccountDropdown({
         right: menuPos.right,
         width: 288,
       }}
-      className="z-[300] rounded-xl border border-radiant-border bg-radiant-surface/98 p-1.5 shadow-2xl backdrop-blur-xl"
+      className="z-[10050] rounded-xl border border-radiant-border bg-radiant-surface/98 p-1.5 shadow-2xl backdrop-blur-xl"
     >
       <div className="space-y-2.5 px-3 py-3">
         <p className="truncate text-xs font-medium text-gray-100" title={user.email}>

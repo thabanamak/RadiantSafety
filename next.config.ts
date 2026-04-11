@@ -1,8 +1,33 @@
 ﻿import path from "path";
 import type { NextConfig } from "next";
 
+/**
+ * GitHub Pages serves `https://<user>.github.io/<repo>/` — set at build time:
+ *   NEXT_PUBLIC_BASE_PATH=/RadiantSafety   (leading slash, no trailing slash)
+ * Omit on Vercel / root domain. See https://nextjs.org/docs/app/api-reference/config/next-config-js/basePath
+ */
+function normalizeBasePath(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim();
+  if (!s || s === "/") return undefined;
+  const withSlash = s.startsWith("/") ? s : `/${s}`;
+  const trimmed = withSlash.replace(/\/+$/, "");
+  return trimmed === "" ? undefined : trimmed;
+}
+
+const basePath = normalizeBasePath(
+  process.env.NEXT_PUBLIC_BASE_PATH ?? process.env.BASE_PATH
+);
+const assetPrefixRaw =
+  process.env.NEXT_PUBLIC_ASSET_PREFIX?.trim() ??
+  process.env.ASSET_PREFIX?.trim() ??
+  "";
+const assetPrefix = assetPrefixRaw === "" ? undefined : assetPrefixRaw.replace(/\/+$/, "");
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  ...(basePath ? { basePath } : {}),
+  ...(assetPrefix ? { assetPrefix } : {}),
   serverExternalPackages: ["rss-parser"],
   /**
    * Dev: give slow disks / AV more time to serve chunks.

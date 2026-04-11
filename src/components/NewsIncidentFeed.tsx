@@ -281,7 +281,7 @@ export default function NewsIncidentFeed({
     filterOpen && menuRect ? (
       <div
         ref={menuPanelRef}
-        className="fixed z-[400] max-h-[min(70vh,520px)] overflow-y-auto rounded-xl border border-radiant-border bg-radiant-card p-3 shadow-2xl shadow-black/50"
+        className="fixed z-[10050] max-h-[min(70vh,520px)] overflow-y-auto rounded-xl border border-radiant-border bg-radiant-card p-3 shadow-2xl shadow-black/50"
         style={{ top: menuRect.top, left: menuRect.left, width: menuRect.width }}
         role="listbox"
         aria-label="Filter by crime severity"
