@@ -54,6 +54,8 @@ import AreaIncidentSummary from "@/components/AreaIncidentSummary";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
 import type { FriendLocation } from "@/components/RadiantMap";
 import SOSController from "@/features/sos/SOSController";
+import IncomingSOSBanner, { type IncomingSOS } from "@/components/IncomingSOSBanner";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
 import { useUserLocation } from "@/hooks/useUserLocation";
@@ -177,6 +179,33 @@ export default function Dashboard() {
   // all other SOS logic lives in SOSController
   const [showSOSSheet, setShowSOSSheet] = useState(false);
   const [sosMapAlerts, setSosMapAlerts] = useState<SOSAlert[]>([]);
+  // Incoming SOS banner — fires when any device inserts into active_sos via Realtime
+  const [incomingSOS, setIncomingSOS] = useState<IncomingSOS | null>(null);
+
+  useEffect(() => {
+    const channel = getSupabaseBrowser()
+      .channel("public:active_sos")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "active_sos" },
+        (payload) => {
+          const row = payload.new as {
+            user_id: string;
+            lng: number;
+            lat: number;
+            created_at: string;
+          };
+          setIncomingSOS({
+            friendName: "User " + row.user_id.substring(0, 4),
+            coordinates: [row.lng, row.lat],
+            time: new Date(row.created_at).toLocaleTimeString(),
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { getSupabaseBrowser().removeChannel(channel); };
+  }, []);
 
   // Find My — friend locations for the map; populated by FindMyController
   const [friendLocations, setFriendLocations] = useState<FriendLocation[]>([]);
@@ -708,6 +737,15 @@ export default function Dashboard() {
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       <RouteToast message={toastMessage} variant="error" onDismiss={dismissToast} />
+
+      {/* Incoming SOS alert banner — Realtime INSERT on active_sos */}
+      <IncomingSOSBanner
+        sos={incomingSOS}
+        onDismiss={() => setIncomingSOS(null)}
+        onLocate={(coords) =>
+          setFlyTarget({ latitude: coords[1], longitude: coords[0], zoom: 17 })
+        }
+      />
 
       <div className="absolute inset-0 z-0">
         <RadiantMap
