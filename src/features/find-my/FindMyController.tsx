@@ -671,7 +671,9 @@ export default function FindMyController({
                                   </span>
                                 )}
                                 {isSafeWalking && (
-                                  <ShieldCheck className="h-3 w-3 shrink-0 text-green-400" title="Safe Walk active" />
+                                  <span title="Safe Walk active">
+                                    <ShieldCheck className="h-3 w-3 shrink-0 text-green-400" />
+                                  </span>
                                 )}
                               </p>
                               <p className="text-[10px] text-gray-600">
