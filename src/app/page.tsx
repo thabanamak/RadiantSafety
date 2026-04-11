@@ -86,32 +86,31 @@ function EmailConfirmSync({
   return null;
 }
 
-function WelcomeBanner() {
+function WelcomeBanner({ authUser }: { authUser: AuthUser | null }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const showWelcome = searchParams.get("welcome") === "1";
+  const visible = showWelcome && authUser !== null;
 
   useEffect(() => {
-    if (!showWelcome) return;
+    if (!visible) return;
     const timer = window.setTimeout(() => {
       router.replace("/", { scroll: false });
     }, 15_000);
     return () => window.clearTimeout(timer);
-  }, [showWelcome, router]);
+  }, [visible, router]);
 
-  if (!showWelcome) return null;
-
-  const user = getStoredUser();
+  if (!visible) return null;
 
   return (
     <div className="pointer-events-auto absolute left-1/2 top-[72px] z-40 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl border border-emerald-500/35 bg-emerald-950/90 px-4 py-3 shadow-xl backdrop-blur-sm">
       <div className="flex items-start gap-3">
         <p className="flex-1 text-center text-sm leading-relaxed text-emerald-50 sm:text-left">
           <span className="font-semibold text-white">
-            Welcome{user?.name ? `, ${user.name}` : ""}!
+            Welcome{authUser.name ? `, ${authUser.name}` : ""}!
           </span>{" "}
           You&apos;re signed in — your reputation starts at{" "}
-          {user?.reputationScore ?? DEFAULT_REPUTATION_SCORE}. Explore the Pulse
+          {authUser.reputationScore ?? DEFAULT_REPUTATION_SCORE}. Explore the Pulse
           and map to get started.
         </p>
         <button
@@ -129,6 +128,7 @@ function WelcomeBanner() {
 
 export default function Dashboard() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
@@ -188,10 +188,15 @@ export default function Dashboard() {
     []
   );
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    const { client } = getSupabaseBrowserClient();
+    if (client) {
+      await client.auth.signOut();
+    }
     clearStoredUser();
     setAuthUser(null);
-  }, []);
+    router.replace("/", { scroll: false });
+  }, [router]);
 
   const handleViewPastReports = useCallback(() => {
     setActiveTab("pulse");
@@ -241,7 +246,7 @@ export default function Dashboard() {
         <EmailConfirmSync onConfirmed={setAuthUser} />
 
         <Suspense fallback={null}>
-          <WelcomeBanner />
+          <WelcomeBanner authUser={authUser} />
         </Suspense>
 
         <TopNav
