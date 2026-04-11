@@ -10,6 +10,8 @@ export interface AuthUser {
    * Supabase profile sync sets true for signed-in users.
    */
   over18Verified?: boolean;
+  /** From `profiles.is_responder` after first responder verification. */
+  isResponder?: boolean;
 }
 
 export const DEFAULT_REPUTATION_SCORE = 50;
@@ -37,7 +39,14 @@ export function getStoredUser(): AuthUser | null {
           : DEFAULT_REPUTATION_SCORE;
       const over18 =
         typeof u.over18Verified === "boolean" ? u.over18Verified : undefined;
-      return { ...u, reputationScore: score, ...(over18 !== undefined ? { over18Verified: over18 } : {}) };
+      const responder =
+        typeof u.isResponder === "boolean" ? u.isResponder : undefined;
+      return {
+        ...u,
+        reputationScore: score,
+        ...(over18 !== undefined ? { over18Verified: over18 } : {}),
+        ...(responder !== undefined ? { isResponder: responder } : {}),
+      };
     }
     return null;
   } catch {

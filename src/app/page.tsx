@@ -71,6 +71,7 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { IntensityFilter } from "@/lib/map-crime-intensity-filter";
 import {
   deleteUserReport,
   fetchUserReports,
@@ -101,6 +102,15 @@ interface SupabaseIncident {
   intensity: number;
   source: string;
   is_verified: boolean;
+}
+
+/** Safe [lng, lat] for routing — avoids destructuring undefined (Symbol.iterator crash). */
+function lngLatTuple(c: unknown): [number, number] | null {
+  if (!Array.isArray(c) || c.length < 2) return null;
+  const lng = Number(c[0]);
+  const lat = Number(c[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return [lng, lat];
 }
 
 function reputationForAuthUser(user: AuthUser): UserReputation {
@@ -166,6 +176,7 @@ export default function Dashboard() {
   const [mapCenter, setMapCenter] = useState<{ latitude: number; longitude: number; zoom: number } | null>(null);
 
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
+  const [crimeIntensityFilter, setCrimeIntensityFilter] = useState<IntensityFilter>("all");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [reporterProfile, setReporterProfile] = useState<{
     id: string;
@@ -302,6 +313,12 @@ export default function Dashboard() {
   const hasCenteredOnUser = useRef(false);
   const [locating, setLocating] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
+  /** Only set in useEffect so SSR and first client paint match (avoids hydration mismatch on `navigator`). */
+  const [geolocationApiMissing, setGeolocationApiMissing] = useState(false);
+
+  useEffect(() => {
+    setGeolocationApiMissing(typeof navigator === "undefined" || !navigator.geolocation);
+  }, []);
 
   // Fly to user's location on first GPS fix
   useEffect(() => {
@@ -321,10 +338,17 @@ export default function Dashboard() {
   const [showHotspotNudge, setShowHotspotNudge] = useState(false);
   const nudgeDismissedUntil = useRef<number>(0);
   const [sosMapAlerts, setSosMapAlerts] = useState<SOSAlert[]>([]);
-  // Incoming SOS banner — fires when any device inserts into active_sos via Realtime
+  // Incoming SOS banner — SafeWalk etc. inserts into active_sos; only verified first responders get the ping
   const [incomingSOS, setIncomingSOS] = useState<IncomingSOS | null>(null);
 
+  /** Nearby SOS + active_sos banner: only after in-app First Responder verification (`profiles.is_responder`). */
+  const canReceiveSOSPings = Boolean(authUser?.isResponder);
+
   useEffect(() => {
+    if (!canReceiveSOSPings) {
+      setIncomingSOS(null);
+      return;
+    }
     const { client } = getSupabaseBrowserClient();
     if (!client) return;
     const channel = client
@@ -351,7 +375,13 @@ export default function Dashboard() {
     return () => {
       client.removeChannel(channel);
     };
-  }, []);
+  }, [canReceiveSOSPings]);
+
+  useEffect(() => {
+    if (!canReceiveSOSPings) {
+      setSosMapAlerts([]);
+    }
+  }, [canReceiveSOSPings]);
 
   // Find My — friend locations for the map; populated by FindMyController
   const [friendLocations, setFriendLocations] = useState<FriendLocation[]>([]);
@@ -476,6 +506,15 @@ export default function Dashboard() {
     setAuthUser(null);
     router.replace("/", { scroll: false });
   }, [router]);
+
+  const handleAuthUserPatch = useCallback((patch: Partial<AuthUser>) => {
+    setAuthUser((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, ...patch };
+      setStoredUser(next);
+      return next;
+    });
+  }, []);
 
   const loadVicPol = useCallback(async () => {
     if (vicpolLoading || vicpolLoaded) return;
@@ -697,7 +736,12 @@ export default function Dashboard() {
   }, [activeIncidentTab, userReportedMapPoints, officialCombinedMapPoints, supabaseMapPoints]);
 
   const handleLocateMe = useCallback(() => {
-    if (!navigator.geolocation) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setToastMessage(
+        "This embedded preview cannot use GPS. Open the same URL in Chrome or Edge (e.g. http://localhost:3000) and allow location there."
+      );
+      return;
+    }
 
     if (userCoords) {
       setFlyTarget({ latitude: userCoords.latitude, longitude: userCoords.longitude, zoom: 16 });
@@ -771,10 +815,17 @@ export default function Dashboard() {
     setShowHotspotNudge(score > 15);
   }, [userCoords, officialCombinedMapPoints, showSafeWalk]);
 
-  const requestContextualSafeRoute = useCallback(async () => {
-    if (!selectedDestination) return;
+  const requestContextualSafeRoute = useCallback(
+    async (destinationOverride?: SelectedDestination | null) => {
+    const dest = destinationOverride ?? selectedDestination;
+    if (!dest) return;
 
-    const [destLng, destLat] = selectedDestination.coordinates;
+    const destPair = lngLatTuple(dest.coordinates);
+    if (!destPair) {
+      setRouteError("That place is missing map coordinates. Choose it again from search or directions.");
+      return;
+    }
+    const [destLng, destLat] = destPair;
     if (!isWithinSafenetCoverage(destLng, destLat)) {
       setToastMessage(SAFENET_COVERAGE_ERROR);
       return;
@@ -790,7 +841,14 @@ export default function Dashboard() {
     let originLng: number;
 
     if (useCustomStart && routeStartCustom) {
-      const [slng, slat] = routeStartCustom.coordinates;
+      const startPair = lngLatTuple(routeStartCustom.coordinates);
+      if (!startPair) {
+        setRouteLoading(false);
+        setRouteLoadingPhase(null);
+        setRouteError("Start location is missing coordinates. Pick the start again from search.");
+        return;
+      }
+      const [slng, slat] = startPair;
       if (!isWithinSafenetCoverage(slng, slat)) {
         setRouteLoading(false);
         setRouteLoadingPhase(null);
@@ -838,12 +896,13 @@ export default function Dashboard() {
     try {
       const engineMode = readSafeRouteEngineMode();
       let clientPathComputed = false;
+      /** Grid A* path — kept in scope for hybrid fallbacks when the server or street-snap fails. */
+      let clientPath: [number, number][] | null = null;
       // Holds the in-flight street-snap promise so hybrid mode can await it
       // if the server upgrade fails and we need to display the snapped path.
       let snapPromise: Promise<[number, number][] | null> | null = null;
 
       if (engineMode === "client" || engineMode === "hybrid") {
-        let clientPath: [number, number][] | null = null;
         try {
           clientPath = computeClientSafeRoute(
             { latitude: originLat, longitude: originLng },
@@ -909,6 +968,13 @@ export default function Dashboard() {
             if (res.status === 503 && data.error_code === "BACKEND_UNAVAILABLE") {
               if (clientPathComputed) {
                 setRouteInfo("Showing grid-based route — Python routing service is offline.");
+                const snapped = snapPromise ? await snapPromise : null;
+                const fallback = snapped ?? clientPath;
+                if (fallback && fallback.length >= 2) {
+                  setSafeRouteData(fallback);
+                } else {
+                  setRouteError("Could not compute route.");
+                }
                 return;
               }
               throw new Error("__BACKEND_UNAVAILABLE__");
@@ -929,7 +995,11 @@ export default function Dashboard() {
             throw new Error(msg.trim() || "Route request failed");
           }
           const line = responseToLineFeature(data);
-          setSafeRouteData(line.geometry.coordinates as [number, number][]);
+          const serverCoords = line.geometry.coordinates;
+          if (!Array.isArray(serverCoords) || serverCoords.length < 2) {
+            throw new Error("__UNROUTABLE__");
+          }
+          setSafeRouteData(serverCoords as [number, number][]);
         } catch (serverErr) {
           // In hybrid mode: server failed — use the snapped client path as fallback.
           // Await the street-snap (started in parallel earlier) so the displayed
@@ -939,6 +1009,11 @@ export default function Dashboard() {
             // snapPromise resolves to null on failure; in that case we have no path to show
             // (we never showed the raw grid path, so better to surface an error).
             if (!snapped) {
+              if (clientPath && clientPath.length >= 2) {
+                setSafeRouteData(clientPath);
+                setRouteInfo("Showing grid route — could not snap to streets (Mapbox directions).");
+                return;
+              }
               if (serverErr instanceof Error && serverErr.name === "AbortError") {
                 setRouteError("Route request timed out. Try again or check your connection.");
               } else if (
@@ -999,7 +1074,23 @@ export default function Dashboard() {
       setRouteLoading(false);
       setRouteLoadingPhase(null);
     }
-  }, [userCoords, mapCenter, selectedDestination, routingIncidents, directionsMode, routeStartCustom]);
+    },
+    [userCoords, mapCenter, selectedDestination, routingIncidents, directionsMode, routeStartCustom]
+  );
+
+  /** Verified responder routing to a live SOS pin (Mapbox + server safe-route / client A*). */
+  const requestRouteToSosLocation = useCallback(
+    (latitude: number, longitude: number) => {
+      const dest: SelectedDestination = {
+        name: "SOS — live location",
+        coordinates: [longitude, latitude],
+      };
+      setSelectedDestination(dest);
+      setFlyTarget({ latitude, longitude, zoom: 16 });
+      void requestContextualSafeRoute(dest);
+    },
+    [requestContextualSafeRoute]
+  );
 
   const closeDestinationCard = useCallback(() => {
     setSelectedDestination(null);
@@ -1029,13 +1120,17 @@ export default function Dashboard() {
 
   const contextualDestinationMarker = useMemo(() => {
     if (!selectedDestination) return null;
-    const [lng, lat] = selectedDestination.coordinates;
+    const pair = lngLatTuple(selectedDestination.coordinates);
+    if (!pair) return null;
+    const [lng, lat] = pair;
     return { name: selectedDestination.name, lng, lat };
   }, [selectedDestination]);
 
   const contextualOriginMarker = useMemo(() => {
     if (!directionsMode || !routeStartCustom) return null;
-    const [lng, lat] = routeStartCustom.coordinates;
+    const pair = lngLatTuple(routeStartCustom.coordinates);
+    if (!pair) return null;
+    const [lng, lat] = pair;
     return { name: routeStartCustom.name, lng, lat };
   }, [directionsMode, routeStartCustom]);
 
@@ -1043,7 +1138,7 @@ export default function Dashboard() {
     Array.isArray(safeRouteData) && safeRouteData.length >= 2;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden">
+    <main className="relative h-screen w-screen">
       <RouteToast message={toastMessage} variant="error" onDismiss={dismissToast} />
 
       {/* Incoming SOS alert banner — Realtime INSERT on active_sos */}
@@ -1078,7 +1173,7 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="absolute inset-0 z-0">
+      <div className="absolute inset-0 z-0 overflow-hidden">
         <RadiantMap
           onFlyTo={flyTarget}
           reports={reportsForRadiantMap}
@@ -1096,6 +1191,7 @@ export default function Dashboard() {
           contextualRouteCoordinates={safeRouteData}
           policeStations={showPoliceOnMap ? VIC_POLICE_STATIONS : []}
           healthFacilities={showHealthFacilitiesOnMap ? VIC_HEALTH_FACILITIES : []}
+          crimeIntensityFilter={crimeIntensityFilter}
         />
       </div>
 
@@ -1134,21 +1230,26 @@ export default function Dashboard() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
-        <div className="pointer-events-auto absolute left-0 top-[92px] z-40">
+        {/* Above TopNav (z-[100]) so edge rails stay clickable under the nav chrome */}
+        <div className="pointer-events-auto absolute left-0 top-[92px] z-[110]">
           <SOSController
             userCoords={userCoords}
             onFlyTo={setFlyTarget}
             onAlertsChange={setSosMapAlerts}
+            sosMapAlerts={sosMapAlerts}
             onAlertResolved={(alertId) =>
               setSosMapAlerts((prev) => prev.filter((a) => a.id !== alertId))
             }
             open={showSOSSheet}
             onOpenChange={setShowSOSSheet}
+            canReceiveSOSPings={canReceiveSOSPings}
+            authUser={authUser}
+            onRequestRouteToSosLocation={requestRouteToSosLocation}
           />
         </div>
 
         {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
+          <div className="pointer-events-auto absolute right-5 top-[92px] z-[110] hidden w-[360px] lg:block">
             <AreaIncidentSummary
               center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
               vicpolItems={vicpolItems}
@@ -1182,6 +1283,9 @@ export default function Dashboard() {
           showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
           onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
           routingActive={routingStatus !== "off"}
+          onAuthUserPatch={handleAuthUserPatch}
+          crimeIntensityFilter={crimeIntensityFilter}
+          onCrimeIntensityFilterChange={setCrimeIntensityFilter}
         />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
@@ -1196,6 +1300,7 @@ export default function Dashboard() {
               areaName: i.suburb,
               latitude: i.latitude,
               longitude: i.longitude,
+              intensity: i.intensity,
             }))}
             onViewMap={(coords) => setFlyTarget(coords)}
           />
@@ -1253,26 +1358,29 @@ export default function Dashboard() {
       <FindMyController
         userCoords={userCoords}
         onFriendLocationsChange={setFriendLocations}
+        authUser={authUser}
       />
       <DirectionsController
         userCoords={userCoords}
         onRouteChange={setActiveRoute}
       />
 
-      {/* Locate-me button — bottom-left, always clickable */}
+      {/* Locate-me — above map overlays; Cursor/embedded previews often lack geolocation (see toast on click). */}
       <button
         onClick={handleLocateMe}
         title={
-          locating
-            ? "Requesting your location…"
-            : userCoords
-            ? "Centre map on your location"
-            : locationPermission === "denied" || locationDenied
-            ? "Tap to retry — you may need to unblock location in your browser"
-            : "Enable current location"
+          geolocationApiMissing
+            ? "GPS unavailable in this preview — open in Chrome or Edge"
+            : locating
+              ? "Requesting your location…"
+              : userCoords
+                ? "Centre map on your location"
+                : locationPermission === "denied" || locationDenied
+                  ? "Tap to retry — you may need to unblock location in your browser"
+                  : "Enable current location"
         }
         className={cn(
-          "pointer-events-auto fixed bottom-6 left-6 z-50 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-all hover:scale-105 active:scale-95",
+          "pointer-events-auto fixed bottom-6 left-6 z-[130] flex h-11 w-11 items-center justify-center rounded-full border shadow-lg backdrop-blur-xl transition-all hover:scale-105 active:scale-95",
           locating
             ? "border-radiant-border bg-radiant-surface/90 text-gray-300"
             : locationDenied
@@ -1294,7 +1402,7 @@ export default function Dashboard() {
 
       {/* Location denied banner */}
       {locationDenied && (
-        <div className="pointer-events-auto fixed bottom-[72px] left-6 z-50 w-72 rounded-2xl border border-amber-500/30 bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl">
+        <div className="pointer-events-auto fixed bottom-[72px] left-6 z-[130] w-72 rounded-2xl border border-amber-500/30 bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl">
           <div className="mb-1 flex items-center justify-between gap-2">
             <p className="text-xs font-semibold text-amber-300">Location access blocked</p>
             <button

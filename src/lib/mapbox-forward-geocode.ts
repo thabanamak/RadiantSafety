@@ -112,8 +112,12 @@ export async function searchboxRetrieve(
       }>;
     };
     const feature = data.features?.[0];
-    if (!feature) return null;
-    const [lng, lat] = feature.geometry.coordinates;
+    if (!feature?.geometry) return null;
+    const raw = feature.geometry.coordinates;
+    if (!Array.isArray(raw) || raw.length < 2) return null;
+    const lng = Number(raw[0]);
+    const lat = Number(raw[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
     return {
       coordinates: [lng, lat],
       name: feature.properties?.name ?? "",

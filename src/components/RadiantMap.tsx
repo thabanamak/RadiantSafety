@@ -19,6 +19,12 @@ import { VicPoliceMapIcon } from "@/components/icons/VicPoliceMapIcon";
 import { zoomScaledMarkerDiameterPx } from "@/lib/map-marker-zoom";
 import type { PoliceStation } from "@/lib/vic-police-stations";
 import type { HealthFacility } from "@/lib/vic-health-facilities";
+import {
+  CRIME_HEATMAP_LAYER_ID,
+  CRIME_POINTS_LAYER_ID,
+  intensityFilterExpression,
+  type IntensityFilter,
+} from "@/lib/map-crime-intensity-filter";
 
 /** Text-only label above police / health markers on hover. */
 function MapFacilityHoverLabel({
@@ -48,60 +54,64 @@ export interface FriendLocation {
   name: string;
 }
 
+export type { IntensityFilter } from "@/lib/map-crime-intensity-filter";
+
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
+/**
+ * Radiating yellow → amber → red; tuned ~30% stronger than the prior gentle pass
+ * (weight, zoom-intensity, radius, colour alphas, layer opacity — caps where needed).
+ */
 const heatmapLayer: LayerProps = {
   id: "incidents-heat",
   type: "heatmap",
   source: "reports",
   maxzoom: 22,
   paint: {
-    // Low/mid stay light on the field; 8–10 ramp hard so serious clusters still max out — merges with weak points stay in amber/orange
     "heatmap-weight": [
       "interpolate", ["linear"], ["get", "intensity"],
-      1, 0.04,
-      3, 0.07,
-      4, 0.1,
-      5, 0.17,
-      6, 0.25,
-      7, 0.34,
-      8, 0.54,
-      9, 0.74,
-      10, 0.92,
+      1, 0.072,
+      10, 1,
     ],
     "heatmap-intensity": [
       "interpolate", ["linear"], ["zoom"],
-      10, 0.52,
-      15, 1.28,
-      18, 1.88,
+      9, 0.29,
+      10, 0.36,
+      12, 0.55,
+      15, 1.33,
+      18, 1.98,
     ],
     "heatmap-radius": [
       "interpolate", ["linear"], ["zoom"],
-      10, 22,
-      13, 46,
-      15, 80,
-      18, 136,
+      9, 16,
+      10, 18,
+      11, 23,
+      12, 31,
+      13, 52,
+      15, 107,
+      18, 202,
     ],
-    // Long amber/orange mid-band (diluted merge), steep red only at top density (tight serious stacks)
     "heatmap-color": [
       "interpolate",
       ["linear"],
       ["heatmap-density"],
       0,    "rgba(0,0,0,0)",
       0.05, "rgba(255,255,200,0)",
-      0.22, "rgba(255,248,130,0.28)",
-      0.4,  "rgba(255,215,65,0.48)",
-      0.56, "rgba(255,175,32,0.62)",
-      0.68, "rgba(255,125,18,0.74)",
-      0.78, "rgba(248,80,12,0.84)",
-      0.86, "rgba(215,38,6,0.91)",
-      0.93, "rgba(165,10,2,0.96)",
-      1.0,  "rgba(98,0,0,0.98)",
+      0.15, "rgba(255,252,150,0.29)",
+      0.3,  "rgba(255,225,80,0.49)",
+      0.45, "rgba(255,185,45,0.65)",
+      0.6,  "rgba(248,120,35,0.75)",
+      0.75, "rgba(220,55,18,0.86)",
+      0.9,  "rgba(175,22,8,0.94)",
+      1.0,  "rgba(115,8,4,0.99)",
     ],
     "heatmap-opacity": [
       "interpolate", ["linear"], ["zoom"],
-      10, 0.8,
-      18, 0.76,
+      9, 0.68,
+      10, 0.72,
+      12, 0.73,
+      15, 0.7,
+      18, 0.65,
     ],
   },
 };
@@ -123,16 +133,24 @@ const pointsLayer: LayerProps = {
   id: "incidents-points",
   type: "circle",
   source: "reports",
-  minzoom: 14,
+  // Zoomed out: heatmap only (no big white discs). Circles fade in from ~z13 for taps + detail.
+  minzoom: 12.5,
   paint: {
-    // Fades in gently as a subtle location marker on top of the heatmap
     "circle-opacity": [
       "interpolate", ["linear"], ["zoom"],
-      14, 0,
-      16, 0.45,
+      12.5, 0,
+      13, 0.22,
+      14, 0.34,
+      16, 0.48,
     ],
     "circle-color": "rgba(255,255,255,0.9)",
-    "circle-radius": 4,
+    "circle-radius": [
+      "interpolate", ["linear"], ["zoom"],
+      13, 4,
+      14, 5,
+      16, 6,
+      18, 7,
+    ],
     "circle-stroke-width": 1.5,
     "circle-stroke-color": "rgba(255,69,0,0.8)",
   },
@@ -206,6 +224,8 @@ interface RadiantMapProps {
   policeStations?: PoliceStation[];
   /** Hospitals & medical centres — white circle + red cross; size follows zoom */
   healthFacilities?: HealthFacility[];
+  /** Heatmap / point layer severity filter (controlled from TopNav). */
+  crimeIntensityFilter: IntensityFilter;
 }
 
 export default function RadiantMap({
@@ -226,6 +246,7 @@ export default function RadiantMap({
   contextualRouteCoordinates,
   policeStations = [],
   healthFacilities = [],
+  crimeIntensityFilter,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const lastReportedCenterRef = useRef<{
@@ -235,45 +256,6 @@ export default function RadiantMap({
   } | null>(null);
   /** Only `setMapZoom` when zoom moves enough — Mapbox emits tiny float drift each frame and causes update-depth loops. */
   const lastReportedMapZoomRef = useRef<number>(MELBOURNE_CENTER.zoom as number);
-  // #region agent log
-  const agentDbgMoveCountRef = useRef(0);
-  const agentDbgLogNRef = useRef(0);
-  const agentDbgLog = (
-    hypothesisId: string,
-    location: string,
-    message: string,
-    data: Record<string, unknown>
-  ) => {
-    if (agentDbgLogNRef.current >= 120) return;
-    agentDbgLogNRef.current += 1;
-    fetch("http://127.0.0.1:7620/ingest/87f954c8-2ca9-4bcd-bcc6-cfcef546d663", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "20c062" },
-      body: JSON.stringify({
-        sessionId: "20c062",
-        runId: "pre-fix",
-        hypothesisId,
-        location,
-        message,
-        data: { ...data, seq: agentDbgLogNRef.current },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  };
-  const agentDbgPoliceNRef = useRef(0);
-  const agentDbgHealthNRef = useRef(0);
-  agentDbgPoliceNRef.current = policeStations.length;
-  agentDbgHealthNRef.current = healthFacilities.length;
-
-  useEffect(() => {
-    agentDbgLog("H4", "RadiantMap.tsx:mount", "RadiantMap mounted", {
-      initialZoom: initialViewState.zoom,
-      lastReportedMapZoomRef: lastReportedMapZoomRef.current,
-      policeN: agentDbgPoliceNRef.current,
-      healthN: agentDbgHealthNRef.current,
-    });
-  }, []);
-  // #endregion
   /** Uncontrolled viewport — do not mirror Mapbox viewState in React (avoids move/setState feedback loops). */
   const initialViewState = useRef({
     latitude: MELBOURNE_CENTER.latitude as number,
@@ -320,6 +302,72 @@ export default function RadiantMap({
 
   /** Current zoom for police / medical marker sizing (updated on map move). */
   const [mapZoom, setMapZoom] = useState<number>(initialViewState.zoom);
+
+  /** Crime heatmap + circle layer: filter GeoJSON features by `intensity` (Mapbox `setFilter`). */
+  const syncCrimeLayerFilters = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map?.isStyleLoaded()) return;
+    const expr = intensityFilterExpression(crimeIntensityFilter);
+    for (const layerId of [CRIME_HEATMAP_LAYER_ID, CRIME_POINTS_LAYER_ID]) {
+      if (map.getLayer(layerId)) {
+        map.setFilter(layerId, expr);
+      }
+    }
+  }, [crimeIntensityFilter]);
+
+  useEffect(() => {
+    syncCrimeLayerFilters();
+  }, [syncCrimeLayerFilters, geojson]);
+
+  /** Parent callback identity can churn; read latest without re-subscribing Map `onMove`. */
+  const onCenterChangeRef = useRef(onCenterChange);
+  onCenterChangeRef.current = onCenterChange;
+
+  /**
+   * Cursor’s embedded browser (and some Mapbox timing paths) can call `onMove` while React is still
+   * processing updates from the previous move. Deferring `setState` to the next animation frame
+   * exits Mapbox’s synchronous stack before updating React — avoids “Maximum update depth exceeded”.
+   */
+  const moveFlushRafRef = useRef<number | null>(null);
+  const pendingZoomForMoveFlushRef = useRef<number | null>(null);
+  const pendingCenterForMoveFlushRef = useRef<{
+    latitude: number;
+    longitude: number;
+    zoom: number;
+  } | null>(null);
+
+  const scheduleMoveStateFlush = useCallback(() => {
+    if (moveFlushRafRef.current != null) return;
+    moveFlushRafRef.current = requestAnimationFrame(() => {
+      moveFlushRafRef.current = null;
+      const pz = pendingZoomForMoveFlushRef.current;
+      pendingZoomForMoveFlushRef.current = null;
+      if (pz != null) {
+        lastReportedMapZoomRef.current = pz;
+        setMapZoom(pz);
+      }
+      const pc = pendingCenterForMoveFlushRef.current;
+      pendingCenterForMoveFlushRef.current = null;
+      const cb = onCenterChangeRef.current;
+      if (pc && cb) {
+        const last = lastReportedCenterRef.current;
+        if (!last || mapCenterMeaningfullyChanged(last, pc)) {
+          lastReportedCenterRef.current = pc;
+          cb(pc);
+        }
+      }
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (moveFlushRafRef.current != null) {
+        cancelAnimationFrame(moveFlushRafRef.current);
+        moveFlushRafRef.current = null;
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!onFlyTo || !mapRef.current) return;
@@ -379,55 +427,28 @@ export default function RadiantMap({
   const onMove = useCallback(
     (evt: { viewState: { latitude: number; longitude: number; zoom: number } }) => {
       const z = evt.viewState.zoom;
-      // #region agent log
-      agentDbgMoveCountRef.current += 1;
+      let shouldFlush = false;
       const zDiff = Math.abs(z - lastReportedMapZoomRef.current);
-      const willSetZoom = zDiff > 0.007;
-      if (agentDbgLogNRef.current < 120) {
-        agentDbgLog("H1", "RadiantMap.tsx:onMove", "onMove tick", {
-          z,
-          lastZoomRef: lastReportedMapZoomRef.current,
-          zDiff,
-          willSetZoom,
-          moveTick: agentDbgMoveCountRef.current,
-          policeN: agentDbgPoliceNRef.current,
-          healthN: agentDbgHealthNRef.current,
-        });
+      if (zDiff > 0.007) {
+        pendingZoomForMoveFlushRef.current = z;
+        shouldFlush = true;
       }
-      // #endregion
-      if (willSetZoom) {
-        // #region agent log
-        agentDbgLog("H2", "RadiantMap.tsx:onMove:setZoom", "setMapZoom path", {
-          z,
-          prevRef: lastReportedMapZoomRef.current,
-          policeN: agentDbgPoliceNRef.current,
-          healthN: agentDbgHealthNRef.current,
-        });
-        // #endregion
-        lastReportedMapZoomRef.current = z;
-        setMapZoom(z);
+      if (onCenterChangeRef.current) {
+        const vs = evt.viewState;
+        const center = {
+          latitude: vs.latitude,
+          longitude: vs.longitude,
+          zoom: vs.zoom,
+        };
+        const last = lastReportedCenterRef.current;
+        if (!last || mapCenterMeaningfullyChanged(last, center)) {
+          pendingCenterForMoveFlushRef.current = center;
+          shouldFlush = true;
+        }
       }
-      if (!onCenterChange) return;
-      const vs = evt.viewState;
-      const center = {
-        latitude: vs.latitude,
-        longitude: vs.longitude,
-        zoom: vs.zoom,
-      };
-      const last = lastReportedCenterRef.current;
-      if (last && !mapCenterMeaningfullyChanged(last, center)) return;
-      // #region agent log
-      agentDbgLog("H3", "RadiantMap.tsx:onMove:center", "onCenterChange firing", {
-        lat: center.latitude,
-        lng: center.longitude,
-        zoom: center.zoom,
-        hadLast: Boolean(last),
-      });
-      // #endregion
-      lastReportedCenterRef.current = center;
-      onCenterChange(center);
+      if (shouldFlush) scheduleMoveStateFlush();
     },
-    [onCenterChange]
+    [scheduleMoveStateFlush]
   );
 
   const handleMapClick = useCallback(
@@ -439,9 +460,26 @@ export default function RadiantMap({
         });
         return;
       }
-      const feats = evt.features;
-      const f = feats?.[0];
-      if (f?.properties) {
+
+      let f = evt.features?.[0] ?? null;
+      if (!f?.properties) {
+        const mapbox = mapRef.current?.getMap?.();
+        if (mapbox) {
+          const { x, y } = evt.point;
+          const pad = 20;
+          const hits = mapbox.queryRenderedFeatures(
+            [
+              [x - pad, y - pad],
+              [x + pad, y + pad],
+            ],
+            { layers: ["incidents-points"] }
+          );
+          f = hits[0] ?? null;
+        }
+      }
+
+      if (f?.properties && f.geometry && f.geometry.type === "Point") {
+        const [lng, lat] = f.geometry.coordinates as [number, number];
         const p = f.properties as Record<string, unknown>;
         const cat = String(p.category ?? "Report");
         const tp = p.trustPoints;
@@ -454,9 +492,20 @@ export default function RadiantMap({
         const tl = p.trustLabel;
         const trustLabel =
           typeof tl === "string" ? tl : tl != null ? String(tl) : null;
+
+        const map = mapRef.current;
+        const currentZoom = map?.getZoom?.() ?? 13;
+        map?.flyTo({
+          center: [lng, lat],
+          zoom: Math.max(currentZoom, 16),
+          pitch: 45,
+          duration: 1100,
+          essential: true,
+        });
+
         setReportPopup({
-          longitude: evt.lngLat.lng,
-          latitude: evt.lngLat.lat,
+          longitude: lng,
+          latitude: lat,
           category: cat,
           trustLabel,
           trustPoints: Number.isFinite(trustPoints as number)
@@ -477,12 +526,18 @@ export default function RadiantMap({
     3: "#b91c1c", // dissolved
   };
 
+  const onMapLoad = useCallback(() => {
+    requestAnimationFrame(() => syncCrimeLayerFilters());
+  }, [syncCrimeLayerFilters]);
+
   return (
+    <div className="relative h-full min-h-0 w-full">
     <Map
       ref={mapRef}
       initialViewState={initialViewState}
       onMove={onMove}
       onClick={handleMapClick}
+      onLoad={onMapLoad}
       interactiveLayerIds={["incidents-points"]}
       mapboxAccessToken={MAPBOX_TOKEN}
       mapStyle="mapbox://styles/mapbox/dark-v11"
@@ -776,5 +831,6 @@ export default function RadiantMap({
         );
       })}
     </Map>
+    </div>
   );
 }

@@ -17,12 +17,12 @@ import type { SafeRouteIncident } from "@/lib/safe-route";
 export function computeClientSafeRoute(
   origin: { latitude: number; longitude: number },
   destination: { latitude: number; longitude: number },
-  incidents: SafeRouteIncident[],
+  incidents: SafeRouteIncident[] | undefined,
   options?: AStarOptions,
 ): [number, number][] | null {
   const start: [number, number] = [origin.longitude, origin.latitude];
   const end: [number, number] = [destination.longitude, destination.latitude];
-  const heat = incidents.map(incidentToHeatSource);
+  const heat = (incidents ?? []).map(incidentToHeatSource);
   const res = astarSafeRoute(start, end, heat, [], {
     heatPenalty: 14,
     resolutionM: 80,

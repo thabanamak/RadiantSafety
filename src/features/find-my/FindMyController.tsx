@@ -5,6 +5,7 @@ import { Users, ChevronLeft, ChevronRight, MapPin, Copy, Check, LogOut, Radio } 
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
+import type { AuthUser } from "@/lib/auth-storage";
 import type { FriendLocation } from "@/components/RadiantMap";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,18 @@ interface RoomMember {
 interface FindMyControllerProps {
   userCoords: { latitude: number; longitude: number } | null;
   onFriendLocationsChange: (locations: FriendLocation[]) => void;
+  /** When set, the friend-room display name uses the account name (no manual name field). */
+  authUser?: AuthUser | null;
+}
+
+function findMyAccountLabel(authUser: AuthUser | null | undefined): string | null {
+  if (!authUser?.id) return null;
+  const name = authUser.name?.trim();
+  if (name) return name.slice(0, 20);
+  const email = authUser.email?.trim();
+  const local = email?.includes("@") ? email.split("@")[0]!.trim() : email;
+  if (local) return local.slice(0, 20);
+  return `User ${authUser.id.replace(/-/g, "").slice(0, 4)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +75,11 @@ const SHARE_INTERVAL_MS = 10_000;
 // Component
 // ---------------------------------------------------------------------------
 
-export default function FindMyController({ userCoords, onFriendLocationsChange }: FindMyControllerProps) {
+export default function FindMyController({
+  userCoords,
+  onFriendLocationsChange,
+  authUser,
+}: FindMyControllerProps) {
   const [open, setOpen] = useState(false);
 
   // Room + identity state
@@ -84,16 +101,29 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
   const shareIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deviceId = useRef<string>("");
 
-  // Restore persisted state on mount
+  const accountLabel = findMyAccountLabel(authUser);
+
+  // Restore persisted room on mount
   useEffect(() => {
     deviceId.current = getDeviceId();
     const savedRoom = localStorage.getItem(STORAGE_ROOM_KEY) ?? "";
-    const savedName = localStorage.getItem(STORAGE_NAME_KEY) ?? "";
     if (savedRoom) {
       setRoomCode(savedRoom);
       setRoomInput(savedRoom);
       setInRoom(true);
     }
+  }, []);
+
+  // Display name: signed-in users use their account label; guests use saved name or a device fallback.
+  useEffect(() => {
+    if (!deviceId.current) deviceId.current = getDeviceId();
+    if (accountLabel) {
+      setDisplayName(accountLabel);
+      setNameInput(accountLabel);
+      localStorage.setItem(STORAGE_NAME_KEY, accountLabel);
+      return;
+    }
+    const savedName = localStorage.getItem(STORAGE_NAME_KEY) ?? "";
     if (savedName) {
       setDisplayName(savedName);
       setNameInput(savedName);
@@ -102,7 +132,7 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
       setDisplayName(fallback);
       setNameInput(fallback);
     }
-  }, []);
+  }, [accountLabel]);
 
   // Fetch existing members when room is joined
   const fetchMembers = useCallback(async (code: string) => {
@@ -301,8 +331,8 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
       {/* Panel */}
       <div
         className={cn(
-          "overflow-hidden transition-all duration-300 ease-in-out",
-          open ? "w-72 opacity-100" : "w-0 opacity-0"
+          "transition-all duration-300 ease-in-out",
+          open ? "w-72 overflow-visible opacity-100" : "w-0 overflow-hidden opacity-0"
         )}
       >
         <div className="w-72 rounded-r-2xl border border-l-0 border-teal-500/20 bg-black/95 shadow-2xl shadow-teal-900/30 backdrop-blur-xl">
@@ -332,19 +362,26 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
             {!inRoom ? (
               /* ── Join / Create flow ─────────────────────────────────── */
               <div className="flex flex-col gap-3">
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-                    Your name
-                  </label>
-                  <input
-                    type="text"
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    placeholder="How friends see you"
-                    maxLength={20}
-                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder-gray-600 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/30 transition-colors"
-                  />
-                </div>
+                {accountLabel ? (
+                  <p className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-[11px] text-gray-400">
+                    <span className="font-semibold uppercase tracking-wider text-gray-500">Sharing as </span>
+                    <span className="text-white">{accountLabel}</span>
+                  </p>
+                ) : (
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                      Your name
+                    </label>
+                    <input
+                      type="text"
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      placeholder="How friends see you"
+                      maxLength={20}
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder-gray-600 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/30 transition-colors"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
@@ -405,18 +442,40 @@ export default function FindMyController({ userCoords, onFriendLocationsChange }
                     </p>
                   </div>
                   <button
-                    onClick={() => setSharing((p) => !p)}
-                    disabled={!userCoords}
-                    className={cn(
-                      "relative h-6 w-11 rounded-full transition-colors disabled:opacity-40",
-                      sharing ? "bg-teal-500" : "bg-white/10"
-                    )}
+                    type="button"
+                    onClick={() => {
+                      setSharing((prev) => {
+                        if (!prev && !userCoords) return prev;
+                        return !prev;
+                      });
+                    }}
+                    disabled={!userCoords && !sharing}
                     aria-label="Toggle location sharing"
+                    style={{
+                      position: "relative",
+                      display: "inline-block",
+                      width: 44,
+                      height: 24,
+                      borderRadius: 9999,
+                      flexShrink: 0,
+                      background: sharing ? "#3b82f6" : "#4b5563",
+                      transition: "background 300ms",
+                      opacity: (!userCoords && !sharing) ? 0.4 : 1,
+                      cursor: (!userCoords && !sharing) ? "not-allowed" : "pointer",
+                    }}
                   >
-                    <span className={cn(
-                      "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                      sharing ? "translate-x-[22px]" : "translate-x-0.5"
-                    )} />
+                    <span
+                      className="pointer-events-none rounded-full bg-white shadow-md"
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        left: 2,
+                        width: 20,
+                        height: 20,
+                        transform: sharing ? "translateX(20px)" : "translateX(0px)",
+                        transition: "transform 300ms cubic-bezier(0.4, 0, 0.2, 1)",
+                      }}
+                    />
                   </button>
                 </div>
 

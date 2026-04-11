@@ -27,22 +27,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
     }
 
-    const { error } = await supabase.from("sos_alerts").insert({
-      user_id,
-      issue,
-      location: `POINT(${lng} ${lat})`,
-      location_lat: lat,
-      location_lng: lng,
-      description: description ?? null,
-      photo_url: photo_url ?? null,
-    });
+    const { data, error } = await supabase
+      .from("sos_alerts")
+      .insert({
+        user_id,
+        issue,
+        location: `POINT(${lng} ${lat})`,
+        location_lat: lat,
+        location_lng: lng,
+        description: description ?? null,
+        photo_url: photo_url ?? null,
+      })
+      .select("id")
+      .single();
 
     if (error) {
       console.error("[sos/broadcast] insert error:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, alert_id: data?.id ?? null });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unknown error" },

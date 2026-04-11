@@ -51,7 +51,8 @@ export function capIncidents<T extends { latitude: number; longitude: number }>(
 }
 
 export function responseToLineFeature(res: SafeRouteResponse): SafeRouteLineFeature {
-  const coordinates = res.waypoints.map((w) => [w.longitude, w.latitude] as [number, number]);
+  const wps = Array.isArray(res.waypoints) ? res.waypoints : [];
+  const coordinates = wps.map((w) => [w.longitude, w.latitude] as [number, number]);
   return {
     type: "Feature",
     properties: {

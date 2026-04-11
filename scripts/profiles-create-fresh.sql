@@ -14,6 +14,7 @@ create table public.profiles (
   upvotes integer not null default 0,
   downvotes integer not null default 0,
   reputation integer generated always as (50 + upvotes - downvotes) stored,
+  is_responder boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint profiles_upvotes_nonnegative check (upvotes >= 0),

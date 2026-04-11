@@ -26,7 +26,7 @@ export default function SOSResolveSheet({ onSubmit, onClose, submitting = false 
   };
 
   return (
-    <div className="pointer-events-auto fixed inset-0 z-[60] flex items-end justify-center sm:items-center">
+    <div className="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center">
       <div className="absolute inset-0 bg-black/65 backdrop-blur-sm"
         onClick={!submitting ? onClose : undefined} />
 

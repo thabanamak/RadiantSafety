@@ -7,6 +7,8 @@ import { getSupabaseBrowser, isSupabaseBrowserConfigured } from "@/lib/supabase-
 import type { SOSIssueType } from "@/components/SOSIssueSheet";
 import { getDeviceId } from "@/lib/identity";
 
+export type SosHandshakeStatus = "pending" | "accepted" | "resolved";
+
 export interface SOSAlert {
   id: string;
   user_id: string;
@@ -17,6 +19,9 @@ export interface SOSAlert {
   distance_meters: number;
   description?: string | null;
   photo_url?: string | null;
+  status?: SosHandshakeStatus;
+  responder_id?: string | null;
+  resolved_at?: string | null;
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -52,15 +57,35 @@ interface SOSAreaPanelProps {
   onFlyTo: (coords: { latitude: number; longitude: number; zoom: number }) => void;
   onAlertsChange?: (alerts: SOSAlert[]) => void;
   onResolveClick?: (alertId: string) => void;
+  canReceiveSOSPings: boolean;
+  /** Opens responder handshake modal (verified responders). */
+  onResponderOpen?: (alert: SOSAlert) => void;
+  /** After a successful resolve API call, drop this id from the local feed (Realtime may be blocked by RLS). */
+  sosAlertIdToPrune?: string | null;
+  onSosPruneApplied?: () => void;
 }
 
-export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onResolveClick }: SOSAreaPanelProps) {
+export default function SOSAreaPanel({
+  userCoords,
+  onFlyTo,
+  onAlertsChange,
+  onResolveClick,
+  canReceiveSOSPings,
+  onResponderOpen,
+  sosAlertIdToPrune,
+  onSosPruneApplied,
+}: SOSAreaPanelProps) {
   const [open, setOpen] = useState(false);
   const [alerts, setAlerts] = useState<SOSAlert[]>([]);
   const [loading, setLoading] = useState(false);
 
   // --- initial fetch ---------------------------------------------------------
   const fetchAlerts = useCallback(async () => {
+    if (!canReceiveSOSPings) {
+      setAlerts([]);
+      onAlertsChange?.([]);
+      return;
+    }
     if (!userCoords) return;
     const sb = getSupabaseBrowser();
     if (!sb) {
@@ -81,20 +106,32 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
     } finally {
       setLoading(false);
     }
-  }, [userCoords, onAlertsChange]);
+  }, [userCoords, onAlertsChange, canReceiveSOSPings]);
 
   useEffect(() => {
     fetchAlerts();
   }, [fetchAlerts]);
 
-  // Sync alert list to parent whenever it changes — done via useEffect so we
-  // never call a parent setState from inside a child state updater.
   useEffect(() => {
-    onAlertsChange?.(alerts);
-  }, [alerts, onAlertsChange]);
+    if (!canReceiveSOSPings) {
+      setAlerts([]);
+      onAlertsChange?.([]);
+    }
+  }, [canReceiveSOSPings, onAlertsChange]);
 
-  // --- Realtime subscription -------------------------------------------------
   useEffect(() => {
+    if (!sosAlertIdToPrune) return;
+    setAlerts((prev) => {
+      const next = prev.filter((a) => a.id !== sosAlertIdToPrune);
+      onAlertsChange?.(next);
+      return next;
+    });
+    onSosPruneApplied?.();
+  }, [sosAlertIdToPrune, onAlertsChange, onSosPruneApplied]);
+
+  // --- Realtime subscription (verified first responders only) ---------------
+  useEffect(() => {
+    if (!canReceiveSOSPings) return;
     const sb = getSupabaseBrowser();
     if (!sb) return;
 
@@ -106,25 +143,62 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
         { event: "INSERT", schema: "public", table: "sos_alerts" },
         (payload) => {
           const row = payload.new as SOSAlert;
+          if (row.resolved_at || row.status === "resolved") return;
           if (!userCoords) return;
           const dist = haversine(
             userCoords.latitude, userCoords.longitude,
             row.location_lat, row.location_lng
           );
           if (dist > 1000) return;
-          const alert: SOSAlert = { ...row, distance_meters: dist };
-          setAlerts((prev) => [alert, ...prev]);
+          const alert: SOSAlert = {
+            ...row,
+            distance_meters: dist,
+            status: row.status ?? "pending",
+          };
+          setAlerts((prev) => {
+            const next = [alert, ...prev];
+            onAlertsChange?.(next);
+            return next;
+          });
           setOpen(true);
         }
       )
-      // Alert resolved — remove from list and map on ALL devices in range
+      // Status / resolution — merge handshake updates or drop resolved rows
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "sos_alerts" },
         (payload) => {
-          const updated = payload.new as { id: string; resolved_at: string | null };
-          if (!updated.resolved_at) return;
-          setAlerts((prev) => prev.filter((a) => a.id !== updated.id));
+          const row = payload.new as SOSAlert & { resolved_at?: string | null; status?: string };
+          if (row.resolved_at || row.status === "resolved") {
+            setAlerts((prev) => {
+              const next = prev.filter((a) => a.id !== row.id);
+              onAlertsChange?.(next);
+              return next;
+            });
+            return;
+          }
+          setAlerts((prev) => {
+            const idx = prev.findIndex((a) => a.id === row.id);
+            if (idx < 0) return prev;
+            const prevAlert = prev[idx]!;
+            const dist = userCoords
+              ? haversine(
+                  userCoords.latitude,
+                  userCoords.longitude,
+                  row.location_lat ?? prevAlert.location_lat,
+                  row.location_lng ?? prevAlert.location_lng
+                )
+              : prevAlert.distance_meters;
+            const next = [...prev];
+            next[idx] = {
+              ...prevAlert,
+              ...row,
+              issue: (row.issue as SOSIssueType) ?? prevAlert.issue,
+              distance_meters: dist,
+            };
+            onAlertsChange?.(next);
+            return next;
+          });
         }
       )
       .subscribe();
@@ -132,7 +206,7 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
     return () => {
       sb.removeChannel(channel);
     };
-  }, [userCoords, onAlertsChange]);
+  }, [userCoords, onAlertsChange, canReceiveSOSPings]);
 
   const recentCount = alerts.filter(
     (a) => Date.now() - new Date(a.created_at).getTime() < 5 * 60 * 1000
@@ -168,8 +242,8 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
       {/* Panel */}
       <div
         className={cn(
-          "overflow-hidden transition-all duration-300 ease-in-out",
-          open ? "w-72 opacity-100" : "w-0 opacity-0"
+          "transition-all duration-300 ease-in-out",
+          open ? "w-72 overflow-visible opacity-100" : "w-0 overflow-hidden opacity-0"
         )}
       >
         <div className="w-72 rounded-r-2xl border border-l-0 border-red-500/20 bg-black/95 shadow-2xl shadow-red-900/30 backdrop-blur-xl">
@@ -193,7 +267,16 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
 
           {/* Body */}
           <div className="max-h-80 overflow-y-auto py-1">
-            {!userCoords ? (
+            {!canReceiveSOSPings ? (
+              <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
+                <Siren className="h-5 w-5 text-gray-600" />
+                <p className="text-xs font-semibold text-gray-300">Responder-only feed</p>
+                <p className="text-[10px] leading-relaxed text-gray-500">
+                  Only verified First Responders receive nearby SOS pings. Open your profile
+                  (top right) and complete <span className="text-gray-400">Verify as First Responder</span>.
+                </p>
+              </div>
+            ) : !userCoords ? (
               <div className="flex flex-col items-center gap-1 px-4 py-6 text-center">
                 <MapPin className="h-4 w-4 text-gray-600" />
                 <p className="text-xs text-gray-500">Enable location to see nearby SOS alerts</p>
@@ -257,9 +340,21 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
                           </div>
                         </button>
 
-                        {/* Resolve button — only shown to the alert's sender */}
-                        {alert.user_id === getDeviceId() && onResolveClick && (
+                        {canReceiveSOSPings && onResponderOpen && alert.user_id !== getDeviceId() && (
                           <button
+                            type="button"
+                            onClick={() => onResponderOpen(alert)}
+                            title="Open responder actions"
+                            className="ml-1 shrink-0 rounded-lg border border-red-500/35 bg-red-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-red-300 transition-colors hover:bg-red-500/20"
+                          >
+                            Respond
+                          </button>
+                        )}
+
+                        {/* Victim / device owner: mark resolved from list (responder uses modal) */}
+                        {onResolveClick && alert.user_id === getDeviceId() && (
+                          <button
+                            type="button"
                             onClick={() => onResolveClick(alert.id)}
                             title="Mark as resolved"
                             className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-green-500/30 bg-green-500/10 text-green-400 transition-colors hover:bg-green-500/20"

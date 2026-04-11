@@ -43,15 +43,17 @@ export async function syncProfileFromAuthUser(
 
   const { data } = await client
     .from("profiles")
-    .select("reputation")
+    .select("reputation, is_responder")
     .eq("id", user.id)
     .maybeSingle();
 
-  const row = data as { reputation?: number } | null;
+  const row = data as { reputation?: number; is_responder?: boolean } | null;
   const rep =
     row && typeof row.reputation === "number" && !Number.isNaN(row.reputation)
       ? row.reputation
       : DEFAULT_REPUTATION_SCORE;
+  const isResponder =
+    row && typeof row.is_responder === "boolean" ? row.is_responder : false;
 
   if (!row || typeof row.reputation !== "number") {
     return {
@@ -59,6 +61,7 @@ export async function syncProfileFromAuthUser(
       name,
       reputationScore: rep,
       over18Verified: true,
+      isResponder,
     };
   }
 
@@ -68,5 +71,6 @@ export async function syncProfileFromAuthUser(
     email,
     reputationScore: rep,
     over18Verified: true,
+    isResponder,
   };
 }

@@ -147,11 +147,6 @@ export default function AreaIncidentSummary({
         aria-label={panelOpen ? "Close area summary" : "Open area summary"}
       >
         <BarChart3 className={cn("h-4 w-4", summary.total > 0 ? "text-cyan-400" : "text-gray-500")} />
-        {summary.total > 0 && (
-          <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan-600 px-0.5 text-[9px] font-bold text-white shadow">
-            {summary.total > 99 ? "99+" : summary.total}
-          </span>
-        )}
         <span className="absolute bottom-0 left-0">
           {panelOpen ? (
             <ChevronRight className="h-2.5 w-2.5 text-gray-600" />
@@ -163,8 +158,8 @@ export default function AreaIncidentSummary({
 
       <div
         className={cn(
-          "overflow-hidden transition-all duration-300 ease-in-out",
-          panelOpen ? "w-[360px] opacity-100" : "w-0 opacity-0"
+          "transition-all duration-300 ease-in-out",
+          panelOpen ? "w-[360px] overflow-visible opacity-100" : "w-0 overflow-hidden opacity-0"
         )}
       >
         <div className="relative w-[360px] shrink-0">
