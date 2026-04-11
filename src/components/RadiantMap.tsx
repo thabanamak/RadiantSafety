@@ -6,6 +6,14 @@ import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
 import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
+import type { SOSAlert } from "@/components/SOSAreaPanel";
+
+export interface FriendLocation {
+  id: string;
+  lat: number;
+  lng: number;
+  name: string;
+}
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
@@ -95,6 +103,14 @@ interface RadiantMapProps {
   gpsPin?: DroppedPin | null;
   /** Manually dropped pin — shown as animated red marker */
   droppedPin?: DroppedPin | null;
+  /** Live device location from useUserLocation — persistent blue "you are here" dot */
+  userLocation?: { latitude: number; longitude: number } | null;
+  /** Active SOS alerts — rendered as radiating pulse markers */
+  sosAlerts?: SOSAlert[];
+  /** Friend locations from "Find My" feature — rendered as teal name-badge markers */
+  friendLocations?: FriendLocation[];
+  /** Active route geometry from Directions feature — rendered as a blue polyline */
+  activeRoute?: { geometry: GeoJSON.LineString } | null;
 }
 
 export default function RadiantMap({
@@ -105,6 +121,10 @@ export default function RadiantMap({
   onPinDropped,
   gpsPin,
   droppedPin,
+  userLocation,
+  sosAlerts = [],
+  friendLocations = [],
+  activeRoute,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [viewState, setViewState] = useState({
@@ -142,9 +162,10 @@ export default function RadiantMap({
     if (!onFlyTo || !mapRef.current) return;
     mapRef.current.flyTo({
       center: [onFlyTo.longitude, onFlyTo.latitude],
-      zoom: onFlyTo.zoom ?? 16,
+      zoom: onFlyTo.zoom ?? 15,
       pitch: 45,
       duration: 1500,
+      essential: true,
     });
   }, [onFlyTo]);
 
@@ -156,6 +177,7 @@ export default function RadiantMap({
       zoom: 16,
       pitch: 45,
       duration: 1200,
+      essential: true,
     });
   }, [gpsPin]);
 
@@ -222,6 +244,46 @@ export default function RadiantMap({
         </Marker>
       )}
 
+      {/* Live device location — persistent blue "you are here" dot */}
+      {userLocation && (
+        <Marker latitude={userLocation.latitude} longitude={userLocation.longitude} anchor="center">
+          <div className="relative flex items-center justify-center">
+            <span className="absolute inline-flex h-10 w-10 animate-ping rounded-full bg-blue-500 opacity-25" />
+            <span className="absolute inline-flex h-6 w-6 rounded-full bg-blue-500 opacity-15" />
+            <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-blue-400 ring-2 ring-white shadow-lg shadow-blue-500/70" />
+          </div>
+        </Marker>
+      )}
+
+      {/* SOS alert pulse markers — radiating rings coloured by issue type */}
+      {sosAlerts.map((alert) => {
+        const colors: Record<string, string> = {
+          allergy: "#f97316", // orange
+          medical: "#22c55e", // green
+          cpr:     "#ec4899", // pink
+        };
+        const color = colors[alert.issue] ?? colors.medical;
+        return (
+          <Marker key={alert.id} latitude={alert.location_lat} longitude={alert.location_lng} anchor="center">
+            <div className="relative flex items-center justify-center">
+              {/* Three staggered expanding rings */}
+              <span className="absolute rounded-full"
+                style={{ width: 72, height: 72, backgroundColor: color, opacity: 0.18,
+                  animation: "ping 1.6s cubic-bezier(0,0,0.2,1) infinite", animationDelay: "0ms" }} />
+              <span className="absolute rounded-full"
+                style={{ width: 48, height: 48, backgroundColor: color, opacity: 0.25,
+                  animation: "ping 1.6s cubic-bezier(0,0,0.2,1) infinite", animationDelay: "400ms" }} />
+              <span className="absolute rounded-full"
+                style={{ width: 28, height: 28, backgroundColor: color, opacity: 0.35,
+                  animation: "ping 1.6s cubic-bezier(0,0,0.2,1) infinite", animationDelay: "800ms" }} />
+              {/* Solid centre dot */}
+              <span className="relative h-4 w-4 rounded-full ring-2 ring-white/70 shadow-lg"
+                style={{ backgroundColor: color, boxShadow: `0 0 12px ${color}99` }} />
+            </div>
+          </Marker>
+        );
+      })}
+
       {/* Manually dropped pin — animated colour-melt */}
       {droppedPin && (
         <Marker latitude={droppedPin.latitude} longitude={droppedPin.longitude} anchor="bottom">
@@ -270,6 +332,43 @@ export default function RadiantMap({
           </div>
         </div>
       )}
+
+      {/* Active route polyline — owned by Directions feature */}
+      {activeRoute && (
+        <Source
+          id="active-route"
+          type="geojson"
+          data={{ type: "Feature", properties: {}, geometry: activeRoute.geometry }}
+        >
+          <Layer
+            id="active-route-line"
+            type="line"
+            paint={{
+              "line-color": "#38bdf8",
+              "line-width": 4,
+              "line-opacity": 0.85,
+            }}
+            layout={{ "line-cap": "round", "line-join": "round" }}
+          />
+        </Source>
+      )}
+
+      {/* Friend location markers — owned by Find My feature */}
+      {friendLocations.map((friend) => (
+        <Marker key={friend.id} latitude={friend.lat} longitude={friend.lng} anchor="bottom">
+          <div className="flex flex-col items-center gap-0.5">
+            {/* Name badge */}
+            <div className="rounded-full border border-teal-400/50 bg-teal-900/80 px-2 py-0.5 text-[10px] font-semibold text-teal-300 shadow backdrop-blur-sm whitespace-nowrap">
+              {friend.name}
+            </div>
+            {/* Dot */}
+            <div className="relative flex items-center justify-center">
+              <span className="absolute inline-flex h-5 w-5 animate-ping rounded-full bg-teal-400 opacity-30" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-teal-400 ring-2 ring-white/60 shadow-lg shadow-teal-400/50" />
+            </div>
+          </div>
+        </Marker>
+      ))}
     </Map>
   );
 }

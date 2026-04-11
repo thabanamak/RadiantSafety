@@ -177,18 +177,28 @@ export default function NewsIncidentFeed({
       <div className="flex-1 overflow-y-auto px-5 pb-6">
         <div className="flex flex-col gap-3">
           {sorted.map((item) => (
-            <button
+            <div
               key={item.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 if (item.latitude != null && item.longitude != null) {
                   onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 });
                 }
                 void ensureSummary(item);
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (item.latitude != null && item.longitude != null) {
+                    onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 });
+                  }
+                  void ensureSummary(item);
+                }
+              }}
               className={cn(
                 "text-left rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600",
-                (item.latitude == null || item.longitude == null) && "cursor-default"
+                (item.latitude == null || item.longitude == null) ? "cursor-default" : "cursor-pointer"
               )}
             >
               <div className="flex items-start justify-between gap-3">
@@ -201,20 +211,6 @@ export default function NewsIncidentFeed({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {item.latitude != null && item.longitude != null && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onViewMap({ latitude: item.latitude as number, longitude: item.longitude as number, zoom: 16 });
-                      }}
-                      className="rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-[11px] font-semibold text-gray-300 hover:border-gray-500 hover:text-white"
-                      aria-label="Fly to map"
-                    >
-                      Fly
-                    </button>
-                  )}
-
                   {item.url && (
                     <a
                       href={item.url}
@@ -253,7 +249,7 @@ export default function NewsIncidentFeed({
                   {summaries[item.id]}
                 </p>
               )}
-            </button>
+            </div>
           ))}
           {sorted.length === 0 && (
             <div className="rounded-xl border border-radiant-border bg-radiant-card p-4 text-sm text-gray-400">
