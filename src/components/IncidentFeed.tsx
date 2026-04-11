@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { UserReport } from "@/lib/types";
+import { getTrustDisplayKind } from "@/lib/report-trust";
 
 interface IncidentFeedProps {
   reports: UserReport[];
@@ -290,21 +291,52 @@ function IncidentCard({
           ) : (
             <p className="mt-2 text-xs leading-relaxed text-gray-300">{report.description}</p>
           )}
-          <div className="mt-2 flex items-center gap-1.5">
-            {report.verifiedBy > 0 ? (
-              <>
-                <CheckCircle className="h-3 w-3 shrink-0 text-radiant-green" />
-                <span className="text-xs font-medium text-radiant-green">
-                  Verified by {report.verifiedBy} trusted users
-                </span>
-              </>
-            ) : (
-              <>
-                <Clock className="h-3 w-3 shrink-0 text-amber-400/90" />
-                <span className="text-xs font-medium text-amber-400/90">
-                  Pending community verification
-                </span>
-              </>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {(() => {
+              const kind = getTrustDisplayKind(report.trustPoints);
+              if (kind === "trustworthy") {
+                return (
+                  <>
+                    <CheckCircle className="h-3 w-3 shrink-0 text-emerald-400" />
+                    <span className="text-xs font-medium text-emerald-300">
+                      Trustworthy
+                    </span>
+                  </>
+                );
+              }
+              if (kind === "semi_trustworthy") {
+                return (
+                  <>
+                    <CheckCircle className="h-3 w-3 shrink-0 text-sky-400" />
+                    <span className="text-xs font-medium text-sky-200">
+                      Semi-trustworthy
+                    </span>
+                  </>
+                );
+              }
+              if (kind === "medium_trust") {
+                return (
+                  <>
+                    <Clock className="h-3 w-3 shrink-0 text-amber-400/90" />
+                    <span className="text-xs font-medium text-amber-300/90">
+                      Medium trust
+                    </span>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <Clock className="h-3 w-3 shrink-0 text-red-400/90" />
+                  <span className="text-xs font-medium text-red-300/90">
+                    Untrustworthy
+                  </span>
+                </>
+              );
+            })()}
+            {report.verifiedBy > 0 && (
+              <span className="text-[10px] text-gray-500">
+                · {report.verifiedBy} confirmations
+              </span>
             )}
           </div>
         </div>

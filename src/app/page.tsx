@@ -11,6 +11,7 @@ import QuickReportFAB, {
 import AuthModal from "@/components/AuthModal";
 import { currentUser } from "@/lib/mock-data";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
+import { getSeverityForCategory } from "@/lib/category-severity";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
 import IncidentFeed from "@/components/IncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
@@ -23,6 +24,8 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
+import { insertUserReport } from "@/lib/supabase-user-reports";
 
 interface VicPolIncident {
   id: string;
@@ -32,6 +35,7 @@ interface VicPolIncident {
   latitude: number | null;
   longitude: number | null;
   intensity: number;
+  /** Normalized 0–1 (from API); map heatmap uses `intensity` 1–10. */
   trustScore: number;
 }
 
@@ -168,7 +172,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
       id: i.id,
       latitude: i.latitude as number,
       longitude: i.longitude as number,
-      trustScore: i.trustScore,
+      intensity: i.intensity,
       category: "Suspicious Activity",
     }));
 
@@ -176,8 +180,7 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     id: i.id,
     latitude: i.location_lat,
     longitude: i.location_lng,
-    // intensity is 1–10; normalise to 0–1 for trustScore
-    trustScore: i.intensity / 10,
+    intensity: i.intensity,
     category: "Suspicious Activity",
   }));
 
@@ -208,16 +211,36 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
   }, []);
 
   const handleReportSubmitted = useCallback(
-    (payload: SubmittedReportPayload) => {
-      const id =
+    async (payload: SubmittedReportPayload) => {
+      let id =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `report-${Date.now()}`;
+
+      const client = getSupabaseBrowser();
+      if (client) {
+        const result = await insertUserReport(client, {
+          category: payload.category,
+          description: payload.description.trim() || "(No description)",
+          latitude: payload.location.latitude,
+          longitude: payload.location.longitude,
+          imageUrl: null,
+        });
+        if (result.id) {
+          id = result.id;
+        } else {
+          console.warn(
+            "[RadiantSafety] user_reports insert skipped or failed:",
+            result.error
+          );
+        }
+      }
+
       const report: UserReport = {
         id,
         latitude: payload.location.latitude,
         longitude: payload.location.longitude,
-        trustScore: 0.5,
+        trustPoints: 10,
         category: payload.category,
         description: payload.description.trim() || "(No description)",
         imageDataUrl: payload.imageDataUrl ?? null,
@@ -242,7 +265,8 @@ export default function Dashboard({ params, searchParams }: DashboardProps) {
     id: r.id,
     latitude: r.latitude,
     longitude: r.longitude,
-    trustScore: r.trustScore,
+    intensity: getSeverityForCategory(r.category),
+    trustPoints: r.trustPoints,
     category: r.category,
   }));
 

@@ -47,8 +47,8 @@ interface QuickReportFABProps {
   onPinLocation?: (pin: PinLocation | null) => void;
   onDropPinMode?: (active: boolean) => void;
   droppedPin?: { latitude: number; longitude: number } | null;
-  /** Called when the user completes submit (location required). */
-  onReportSubmitted?: (report: SubmittedReportPayload) => void;
+  /** Called when the user completes submit (location required). May be async (e.g. Supabase insert). */
+  onReportSubmitted?: (report: SubmittedReportPayload) => void | Promise<void>;
   /** Called when the SOS button is tapped — opens the issue selection sheet */
   onSOSPress?: () => void;
 }
@@ -193,26 +193,29 @@ export default function QuickReportFAB({
     onDropPinMode?.(false);
   }, [onPinLocation, onDropPinMode]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selected || !pinnedLocation) return;
-    onReportSubmitted?.({
-      category: selected,
-      description,
-      location: pinnedLocation,
-      ...(attachedImageDataUrl ? { imageDataUrl: attachedImageDataUrl } : {}),
-    });
     setSubmitted(true);
-    setTimeout(() => {
-      setIsOpen(false);
-      setSubmitted(false);
-      setSelected(null);
-      setDescription("");
-      setStep("category");
-      setPinnedLocation(null);
-      setLocMode("none");
-      resetOptionalImage();
-      onPinLocation?.(null);
-    }, 1800);
+    try {
+      await onReportSubmitted?.({
+        category: selected,
+        description,
+        location: pinnedLocation,
+        ...(attachedImageDataUrl ? { imageDataUrl: attachedImageDataUrl } : {}),
+      });
+    } finally {
+      setTimeout(() => {
+        setIsOpen(false);
+        setSubmitted(false);
+        setSelected(null);
+        setDescription("");
+        setStep("category");
+        setPinnedLocation(null);
+        setLocMode("none");
+        resetOptionalImage();
+        onPinLocation?.(null);
+      }, 1800);
+    }
   };
 
   const handleClose = () => {

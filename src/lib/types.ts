@@ -2,7 +2,8 @@ export interface UserReport {
   id: string;
   latitude: number;
   longitude: number;
-  trustScore: number;
+  /** Community trust = 10 + upvotes − downvotes (matches `user_reports.trust` in Supabase). */
+  trustPoints: number;
   category: ReportCategory;
   description: string;
   /** Optional photo (data URL) from Quick Report. */
@@ -14,10 +15,16 @@ export interface UserReport {
   userId: string;
 }
 
-export type MapIncidentPoint = Pick<
-  UserReport,
-  "id" | "latitude" | "longitude" | "trustScore" | "category"
->;
+/** Map + heatmap: intensity 1–10; optional trustPoints for community trust label. */
+export type MapIncidentPoint = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  category: ReportCategory;
+  intensity: number;
+  /** Set for user-submitted reports (10 + up − down). */
+  trustPoints?: number;
+};
 
 export type ReportCategory =
   | "Gang Activity"

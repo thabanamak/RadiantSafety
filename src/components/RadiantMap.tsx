@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Map, { Layer, Marker, Source, type MapRef } from "react-map-gl/mapbox";
+import Map, { Layer, Marker, Popup, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
-import { toGeoJSON, userReports, MELBOURNE_CENTER } from "@/lib/mock-data";
+import {
+  toGeoJSON,
+  userReports,
+  userReportToMapPoint,
+  MELBOURNE_CENTER,
+} from "@/lib/mock-data";
 import type { MapIncidentPoint } from "@/lib/types";
 import { MapPin } from "lucide-react";
 import type { SOSAlert } from "@/components/SOSAreaPanel";
@@ -188,7 +193,17 @@ export default function RadiantMap({
     };
   }, [droppedPin]);
 
-  const geojson = toGeoJSON(reports ?? userReports);
+  const mapPoints =
+    reports ?? userReports.map(userReportToMapPoint);
+  const geojson = toGeoJSON(mapPoints);
+
+  const [reportPopup, setReportPopup] = useState<{
+    longitude: number;
+    latitude: number;
+    category: string;
+    trustLabel: string | null;
+    trustPoints: number | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!onFlyTo || !mapRef.current) return;
@@ -246,11 +261,40 @@ export default function RadiantMap({
 
   const handleMapClick = useCallback(
     (evt: MapMouseEvent) => {
-      if (!dropPinMode) return;
-      onPinDropped?.({
-        latitude: evt.lngLat.lat,
-        longitude: evt.lngLat.lng,
-      });
+      if (dropPinMode) {
+        onPinDropped?.({
+          latitude: evt.lngLat.lat,
+          longitude: evt.lngLat.lng,
+        });
+        return;
+      }
+      const feats = evt.features;
+      const f = feats?.[0];
+      if (f?.properties) {
+        const p = f.properties as Record<string, unknown>;
+        const cat = String(p.category ?? "Report");
+        const tp = p.trustPoints;
+        const trustPoints =
+          typeof tp === "number"
+            ? tp
+            : tp != null
+              ? Number(tp)
+              : null;
+        const tl = p.trustLabel;
+        const trustLabel =
+          typeof tl === "string" ? tl : tl != null ? String(tl) : null;
+        setReportPopup({
+          longitude: evt.lngLat.lng,
+          latitude: evt.lngLat.lat,
+          category: cat,
+          trustLabel,
+          trustPoints: Number.isFinite(trustPoints as number)
+            ? (trustPoints as number)
+            : null,
+        });
+        return;
+      }
+      setReportPopup(null);
     },
     [dropPinMode, onPinDropped]
   );
@@ -268,6 +312,7 @@ export default function RadiantMap({
       {...viewState}
       onMove={onMove}
       onClick={handleMapClick}
+      interactiveLayerIds={["incidents-points"]}
       mapboxAccessToken={MAPBOX_TOKEN}
       mapStyle="mapbox://styles/mapbox/dark-v11"
       style={{ width: "100%", height: "100%" }}
@@ -279,6 +324,35 @@ export default function RadiantMap({
         <Layer {...heatmapLayer} />
         <Layer {...pointsLayer} />
       </Source>
+
+      {reportPopup && (
+        <Popup
+          longitude={reportPopup.longitude}
+          latitude={reportPopup.latitude}
+          anchor="bottom"
+          onClose={() => setReportPopup(null)}
+          closeButton
+          closeOnClick={false}
+        >
+          <div className="max-w-[220px] text-xs text-gray-900">
+            <p className="font-semibold">{reportPopup.category}</p>
+            {reportPopup.trustLabel != null && (
+              <p className="mt-1 text-gray-700">
+                {reportPopup.trustLabel}
+                {reportPopup.trustPoints != null && (
+                  <span className="text-gray-500">
+                    {" "}
+                    · trust {reportPopup.trustPoints}
+                  </span>
+                )}
+              </p>
+            )}
+            {reportPopup.trustLabel == null && (
+              <p className="mt-1 text-gray-600">Official / historical incident</p>
+            )}
+          </div>
+        </Popup>
+      )}
 
       {/* GPS "ping me" marker — pulsing blue dot */}
       {gpsPin && (
