@@ -36,6 +36,7 @@ export function useUserLocation(): UserLocationState {
 
     // Prime coords quickly: watchPosition can delay the first fix; getCurrentPosition
     // usually returns sooner after the user allows location.
+    // Use a 5-minute cache so returning visitors get their position instantly.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setState({
@@ -51,7 +52,7 @@ export function useUserLocation(): UserLocationState {
       () => {
         /* watch below will still try; avoid flipping to denied on first-shot timeout */
       },
-      { enableHighAccuracy: false, timeout: 12_000, maximumAge: 60_000 }
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 }
     );
 
     const watchId = navigator.geolocation.watchPosition(

@@ -26,7 +26,7 @@ export type GeolocationMode = "full" | "routing";
 /**
  * Try precise fix first, then faster / cached reading.
  *
- * - `full` (default): up to ~65s total — best for “drop pin at my feet” flows.
+ * - `full` (default): cached fix first (instant if recent), then GPS capped at 12s, then network fallback — ~23s worst case.
  * - `routing`: favours cached / network fixes first, caps ~14s — avoids blocking
  *   “Get safe route” on long GPS timeouts indoors.
  */
@@ -47,9 +47,12 @@ export async function getCurrentPositionBestEffort(
           { enableHighAccuracy: false, timeout: 5_000, maximumAge: 0 },
         ]
       : [
-          { enableHighAccuracy: true, timeout: 28_000, maximumAge: 0 },
-          { enableHighAccuracy: false, timeout: 22_000, maximumAge: 0 },
-          { enableHighAccuracy: false, timeout: 15_000, maximumAge: 120_000 },
+          // Return a recent cached fix instantly if one exists (covers most returning users).
+          { enableHighAccuracy: false, timeout: 3_000, maximumAge: 120_000 },
+          // Fresh GPS fix — capped at 12s so we don't hang.
+          { enableHighAccuracy: true,  timeout: 12_000, maximumAge: 0 },
+          // Network / Wi-Fi fallback.
+          { enableHighAccuracy: false, timeout: 8_000,  maximumAge: 0 },
         ];
 
   let lastError: GeolocationPositionError | Error | null = null;

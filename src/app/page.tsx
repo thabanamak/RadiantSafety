@@ -47,6 +47,7 @@ import {
   type SafeRouteResponse,
 } from "@/lib/safe-route";
 import { computeClientSafeRoute, readSafeRouteEngineMode } from "@/lib/client-safe-route";
+import { snapRouteToStreets } from "@/lib/street-snap";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
@@ -494,6 +495,9 @@ export default function Dashboard() {
     try {
       const engineMode = readSafeRouteEngineMode();
       let clientPathComputed = false;
+      // Holds the in-flight street-snap promise so hybrid mode can await it
+      // if the server upgrade fails and we need to display the snapped path.
+      let snapPromise: Promise<[number, number][] | null> | null = null;
 
       if (engineMode === "client" || engineMode === "hybrid") {
         let clientPath: [number, number][] | null = null;
@@ -507,12 +511,18 @@ export default function Dashboard() {
           throw new Error("__UNROUTABLE__");
         }
         if (clientPath) {
-          setSafeRouteData(clientPath);
           clientPathComputed = true;
+          // Start the street-snap in the background immediately.
+          snapPromise = snapRouteToStreets(clientPath);
           if (engineMode === "client") {
+            // Client-only: wait for the snapped path before displaying anything
+            // so the route always follows real streets.
+            const snapped = await snapPromise;
+            setSafeRouteData(snapped ?? clientPath);
             return;
           }
-          // hybrid: client path is shown immediately; continue to try server upgrade below
+          // hybrid: keep clientPath + snapPromise in memory as a silent fallback;
+          // don't render the raw grid path — the server result will be shown first.
         } else if (engineMode === "client") {
           throw new Error("__UNROUTABLE__");
         }
@@ -578,18 +588,38 @@ export default function Dashboard() {
           const line = responseToLineFeature(data);
           setSafeRouteData(line.geometry.coordinates as [number, number][]);
         } catch (serverErr) {
-          // In hybrid mode: if client path is already shown, absorb server errors gracefully
+          // In hybrid mode: server failed — use the snapped client path as fallback.
+          // Await the street-snap (started in parallel earlier) so the displayed
+          // fallback path follows real footpaths instead of cutting through buildings.
           if (engineMode === "hybrid" && clientPathComputed) {
+            const snapped = snapPromise ? await snapPromise : null;
+            // snapPromise resolves to null on failure; in that case we have no path to show
+            // (we never showed the raw grid path, so better to surface an error).
+            if (!snapped) {
+              if (serverErr instanceof Error && serverErr.name === "AbortError") {
+                setRouteError("Route request timed out. Try again or check your connection.");
+              } else if (
+                serverErr instanceof Error &&
+                (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
+                  serverErr.message.includes("ECONNREFUSED"))
+              ) {
+                setRouteError("Python routing service is offline. Set NEXT_PUBLIC_SAFE_ROUTE_ENGINE=client in your environment to use in-browser routing.");
+              } else {
+                setRouteError("Could not compute route.");
+              }
+              return;
+            }
+            setSafeRouteData(snapped);
             if (serverErr instanceof Error && serverErr.name === "AbortError") {
-              setRouteInfo("Showing grid-based route — routing service timed out.");
+              setRouteInfo("Showing street-snapped route — routing service timed out.");
             } else if (
               serverErr instanceof Error &&
               (serverErr.message === "__BACKEND_UNAVAILABLE__" ||
                 serverErr.message.includes("ECONNREFUSED"))
             ) {
-              setRouteInfo("Showing grid-based route — Python routing service is offline.");
+              setRouteInfo("Showing street-snapped route — Python routing service is offline.");
             } else {
-              setRouteInfo("Showing grid-based route — server upgrade unavailable.");
+              setRouteInfo("Showing street-snapped route — server upgrade unavailable.");
             }
             return;
           }
