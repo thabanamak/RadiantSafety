@@ -152,6 +152,8 @@ function WelcomeBanner({ authUser }: { authUser: AuthUser | null }) {
   );
 }
 
+export type RoutingStatus = "off" | "planning" | "active";
+
 export default function Dashboard() {
   const pathname = usePathname();
   const router = useRouter();
@@ -427,6 +429,12 @@ export default function Dashboard() {
       subscription.unsubscribe();
     };
   }, [pathname, router]);
+
+  const routingStatus: RoutingStatus = safeRouteData
+    ? "active"
+    : gpsPin || droppedPin || dropPinMode
+      ? "planning"
+      : "off";
 
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
@@ -1119,14 +1127,16 @@ export default function Dashboard() {
           />
         </div>
 
-        <div className="pointer-events-auto absolute right-0 top-[92px] z-40 sm:right-1">
-          <AreaIncidentSummary
-            center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
-            vicpolItems={vicpolItems}
-            supabaseItems={supabaseItems}
-            active={activeIncidentTab === "official"}
-          />
-        </div>
+        {routingStatus === "off" && (
+          <div className="pointer-events-auto absolute right-5 top-[92px] z-40 hidden w-[360px] lg:block">
+            <AreaIncidentSummary
+              center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
+              vicpolItems={vicpolItems}
+              supabaseItems={supabaseItems}
+              active={activeIncidentTab === "official"}
+            />
+          </div>
+        )}
 
         <Suspense fallback={null}>
           <WelcomeBanner authUser={authUser} />
@@ -1151,6 +1161,7 @@ export default function Dashboard() {
           onShowPoliceOnMapChange={setShowPoliceOnMap}
           showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
           onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
+          routingActive={routingStatus !== "off"}
         />
 
         {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}

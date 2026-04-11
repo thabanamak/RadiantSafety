@@ -33,6 +33,7 @@ from app.engine.pathfinding import (
     path_peak_heat,
 )
 from app.engine.road_network_astar import road_network_astar_route
+from app.engine.polyline_sanitize import sanitize_route_polyline
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +415,12 @@ def compute_route(body: RouteRequest) -> RouteResponse:
             status_code=404,
             detail="No path found: try a shorter trip, expand padding, or lower grid resolution.",
         )
+
+    # Sanitize: remove loops, simplify, smooth
+    path = sanitize_route_polyline(path)
+    dist = _path_length_m(path)
+    if dist > 0:
+        dur = dist / 1.39
 
     waypoints = [LatLon(latitude=lat, longitude=lon) for lat, lon in path]
     mean_h = path_mean_heat(path, heats) if heats else 0.0
