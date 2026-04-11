@@ -68,7 +68,6 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { insertUserReport } from "@/lib/supabase-user-reports";
 
 interface VicPolIncident {
