@@ -4,7 +4,6 @@ import { LogIn, UserPlus, LogOut, ChevronDown, ShieldAlert, Users } from "lucide
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/cn";
 import type { UserReputation, UserReport } from "@/lib/types";
-import { userReports } from "@/lib/mock-data";
 import SearchBar from "./SearchBar";
 
 export interface AuthUser {

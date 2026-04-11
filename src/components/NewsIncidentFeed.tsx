@@ -176,18 +176,27 @@ export default function NewsIncidentFeed({
       {isOpen && (
       <div className="flex-1 overflow-y-auto px-5 pb-6">
         <div className="flex flex-col gap-3">
-          {sorted.map((item) => (
-            <button
+          {sorted.map((item) => {
+            const activateCard = () => {
+              if (item.latitude != null && item.longitude != null) {
+                onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 });
+              }
+              void ensureSummary(item);
+            };
+            return (
+            <div
               key={item.id}
-              type="button"
-              onClick={() => {
-                if (item.latitude != null && item.longitude != null) {
-                  onViewMap({ latitude: item.latitude, longitude: item.longitude, zoom: 16 });
+              role="button"
+              tabIndex={0}
+              onClick={activateCard}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  activateCard();
                 }
-                void ensureSummary(item);
               }}
               className={cn(
-                "text-left rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600",
+                "text-left rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600 outline-none focus-visible:ring-2 focus-visible:ring-radiant-red/50",
                 (item.latitude == null || item.longitude == null) && "cursor-default"
               )}
             >
@@ -253,8 +262,9 @@ export default function NewsIncidentFeed({
                   {summaries[item.id]}
                 </p>
               )}
-            </button>
-          ))}
+            </div>
+            );
+          })}
           {sorted.length === 0 && (
             <div className="rounded-xl border border-radiant-border bg-radiant-card p-4 text-sm text-gray-400">
               No news incidents found.

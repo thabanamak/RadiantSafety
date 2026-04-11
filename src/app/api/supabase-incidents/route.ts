@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export interface SupabaseIncident {
   id: string;
@@ -13,6 +13,15 @@ export interface SupabaseIncident {
 }
 
 export async function GET() {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return NextResponse.json({
+      items: [],
+      error:
+        "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY (or NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY).",
+    });
+  }
+
   try {
     // Supabase/PostgREST commonly defaults to returning only the first 1000 rows.
     // Paginate until exhaustion so the heatmap can use the full dataset.

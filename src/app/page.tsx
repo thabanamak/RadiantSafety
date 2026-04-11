@@ -1,14 +1,18 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, use } from "react";
 import RadiantMap, { type DroppedPin } from "@/components/RadiantMap";
 import TopNav from "@/components/TopNav";
 import type { AuthUser, IncidentTab } from "@/components/TopNav";
-import QuickReportFAB, { type PinLocation } from "@/components/QuickReportFAB";
+import QuickReportFAB, {
+  type PinLocation,
+  type SubmittedReportPayload,
+} from "@/components/QuickReportFAB";
 import AuthModal from "@/components/AuthModal";
 import { currentUser } from "@/lib/mock-data";
 import type { MapIncidentPoint, UserReport } from "@/lib/types";
 import NewsIncidentFeed from "@/components/NewsIncidentFeed";
+import IncidentFeed from "@/components/IncidentFeed";
 import AreaIncidentSummary from "@/components/AreaIncidentSummary";
 
 interface VicPolIncident {
@@ -35,7 +39,14 @@ interface SupabaseIncident {
 
 type ModalState = "closed" | "login" | "signup";
 
-export default function Dashboard() {
+type DashboardProps = {
+  params: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default function Dashboard({ params, searchParams }: DashboardProps) {
+  use(params);
+  use(searchParams);
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
     longitude: number;
@@ -54,6 +65,9 @@ export default function Dashboard() {
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
 
   const [supabaseItems, setSupabaseItems] = useState<SupabaseIncident[]>([]);
+
+  /** In-session user submissions (Quick Report); shown under User Reported + search. */
+  const [submittedUserReports, setSubmittedUserReports] = useState<UserReport[]>([]);
 
   // Location pin state — shared between FAB and map
   const [dropPinMode, setDropPinMode] = useState(false);
@@ -147,7 +161,8 @@ export default function Dashboard() {
 
   const handleDropPinMode = useCallback((active: boolean) => {
     setDropPinMode(active);
-    if (!active) setDroppedPin(null);
+    // Do not clear droppedPin here — turning off drop mode also runs after a successful
+    // map click; clearing would remove the pin. Use handlePinLocation(null) to clear.
   }, []);
 
   const handlePinDropped = useCallback((pin: DroppedPin) => {
@@ -155,8 +170,47 @@ export default function Dashboard() {
     setDropPinMode(false);
   }, []);
 
+  const handleReportSubmitted = useCallback(
+    (payload: SubmittedReportPayload) => {
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `report-${Date.now()}`;
+      const report: UserReport = {
+        id,
+        latitude: payload.location.latitude,
+        longitude: payload.location.longitude,
+        trustScore: 0.5,
+        category: payload.category,
+        description: payload.description.trim() || "(No description)",
+        imageDataUrl: payload.imageDataUrl ?? null,
+        verifiedBy: 0,
+        upvotes: 0,
+        downvotes: 0,
+        createdAt: new Date(),
+        userId: authUser?.email ?? "anonymous",
+      };
+      setSubmittedUserReports((prev) => [report, ...prev]);
+      setActiveIncidentTab("user-reported");
+      setFlyTarget({
+        latitude: report.latitude,
+        longitude: report.longitude,
+        zoom: 16,
+      });
+    },
+    [authUser]
+  );
+
+  const userReportedMapPoints: MapIncidentPoint[] = submittedUserReports.map((r) => ({
+    id: r.id,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    trustScore: r.trustScore,
+    category: r.category,
+  }));
+
   function activeMapPoints(): MapIncidentPoint[] {
-    if (activeIncidentTab === "user-reported") return [];
+    if (activeIncidentTab === "user-reported") return userReportedMapPoints;
     if (activeIncidentTab === "official") return [...supabaseMapPoints, ...vicpolMapPoints];
     return supabaseMapPoints;
   }
@@ -189,7 +243,7 @@ export default function Dashboard() {
         <TopNav
           reputation={currentUser}
           user={authUser}
-          reports={[]}
+          reports={submittedUserReports}
           activeIncidentTab={activeIncidentTab}
           onIncidentTabChange={setActiveIncidentTab}
           onSearchSelectIncident={handleViewMap}
@@ -199,28 +253,44 @@ export default function Dashboard() {
           onLogout={handleLogout}
         />
 
-        {/* Bottom crime-news sheet (no left-side toggle) */}
-        <NewsIncidentFeed
-          items={vicpolItems.map((i) => ({
-            id: i.id,
-            outlet: "Victoria Police",
-            title: i.title,
-            url: i.url,
-            publishedAt: null,
-            areaName: i.suburb,
-            latitude: i.latitude,
-            longitude: i.longitude,
-          }))}
-          onViewMap={(coords) => setFlyTarget(coords)}
-        />
+        {/* Bottom sheet: official = VicPol news; user-reported = community reports with full text */}
+        {activeIncidentTab === "official" ? (
+          <NewsIncidentFeed
+            items={vicpolItems.map((i) => ({
+              id: i.id,
+              outlet: "Victoria Police",
+              title: i.title,
+              url: i.url,
+              publishedAt: null,
+              areaName: i.suburb,
+              latitude: i.latitude,
+              longitude: i.longitude,
+            }))}
+            onViewMap={(coords) => setFlyTarget(coords)}
+          />
+        ) : (
+          <IncidentFeed
+            reports={submittedUserReports}
+            onViewMap={handleViewMap}
+            reserveTopPx={220}
+            collapsedLabel={
+              submittedUserReports.length > 0
+                ? `User reports (${submittedUserReports.length})`
+                : "User reports"
+            }
+            sheetTitle="User-reported incidents"
+          />
+        )}
 
-        {/* User Reported empty state */}
-        {activeIncidentTab === "user-reported" && (
+        {/* User Reported empty state — only when nothing submitted this session */}
+        {activeIncidentTab === "user-reported" && submittedUserReports.length === 0 && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-radiant-border bg-radiant-surface/90 px-6 py-5 text-center shadow-xl backdrop-blur-xl">
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
-              <p className="text-xs text-gray-500">Be the first to report an incident in your area.</p>
+              <p className="text-xs text-gray-500">
+                Use the red quick-report button and set a location to add one.
+              </p>
             </div>
           </div>
         )}
@@ -230,6 +300,7 @@ export default function Dashboard() {
         onPinLocation={handlePinLocation}
         onDropPinMode={handleDropPinMode}
         droppedPin={droppedPin}
+        onReportSubmitted={handleReportSubmitted}
       />
 
       {vicpolLoading && (

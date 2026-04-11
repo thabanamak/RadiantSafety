@@ -5,6 +5,8 @@ export interface UserReport {
   trustScore: number;
   category: ReportCategory;
   description: string;
+  /** Optional photo (data URL) from Quick Report. */
+  imageDataUrl?: string | null;
   verifiedBy: number;
   upvotes: number;
   downvotes: number;

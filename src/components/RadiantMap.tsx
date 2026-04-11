@@ -58,6 +58,33 @@ const heatmapLayer: LayerProps = {
   },
 };
 
+/** Avoid controlled-map feedback loops: Mapbox can re-emit move with tiny float drift. */
+function viewStateMeaningfullyChanged(
+  a: { latitude: number; longitude: number; zoom: number; bearing: number; pitch: number },
+  b: typeof a
+): boolean {
+  const eps = 1e-7;
+  return (
+    Math.abs(a.latitude - b.latitude) > eps ||
+    Math.abs(a.longitude - b.longitude) > eps ||
+    Math.abs(a.zoom - b.zoom) > 1e-5 ||
+    Math.abs(a.bearing - b.bearing) > 1e-4 ||
+    Math.abs(a.pitch - b.pitch) > 1e-4
+  );
+}
+
+function mapCenterMeaningfullyChanged(
+  a: { latitude: number; longitude: number; zoom: number },
+  b: { latitude: number; longitude: number; zoom: number }
+): boolean {
+  const eps = 1e-7;
+  return (
+    Math.abs(a.latitude - b.latitude) > eps ||
+    Math.abs(a.longitude - b.longitude) > eps ||
+    Math.abs(a.zoom - b.zoom) > 1e-5
+  );
+}
+
 const pointsLayer: LayerProps = {
   id: "incidents-points",
   type: "circle",
@@ -107,6 +134,11 @@ export default function RadiantMap({
   droppedPin,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
+  const lastReportedCenterRef = useRef<{
+    latitude: number;
+    longitude: number;
+    zoom: number;
+  } | null>(null);
   const [viewState, setViewState] = useState({
     latitude: MELBOURNE_CENTER.latitude as number,
     longitude: MELBOURNE_CENTER.longitude as number,
@@ -164,12 +196,28 @@ export default function RadiantMap({
 
   const onMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
-      setViewState(evt.viewState);
-      onCenterChange?.({
-        latitude: evt.viewState.latitude,
-        longitude: evt.viewState.longitude,
-        zoom: evt.viewState.zoom,
-      });
+      const vs = evt.viewState;
+      const next = {
+        latitude: vs.latitude,
+        longitude: vs.longitude,
+        zoom: vs.zoom,
+        bearing: vs.bearing,
+        pitch: vs.pitch,
+      };
+      setViewState((prev) =>
+        viewStateMeaningfullyChanged(prev, next) ? next : prev
+      );
+
+      if (!onCenterChange) return;
+      const center = {
+        latitude: next.latitude,
+        longitude: next.longitude,
+        zoom: next.zoom,
+      };
+      const last = lastReportedCenterRef.current;
+      if (last && !mapCenterMeaningfullyChanged(last, center)) return;
+      lastReportedCenterRef.current = center;
+      onCenterChange(center);
     },
     [onCenterChange]
   );
