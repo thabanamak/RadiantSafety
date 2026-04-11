@@ -155,7 +155,7 @@ export default function RoutePlannerPanel({
                   : "Calculating…"}
             </>
           ) : (
-            "Get safe route"
+            "Get Safe Route"
           )}
         </button>
       </div>

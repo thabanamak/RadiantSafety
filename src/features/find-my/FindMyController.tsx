@@ -16,7 +16,8 @@ interface RoomMember {
   id: string;
   room_code: string;
   device_id: string;
-  display_name: string;
+  /** May be absent on rows from DB / Realtime before backfill. */
+  display_name?: string | null;
   lat: number;
   lng: number;
   updated_at: string;
@@ -65,6 +66,19 @@ function timeAgo(iso: string): string {
   if (secs < 60) return `${secs}s ago`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
   return `${Math.floor(secs / 3600)}h ago`;
+}
+
+function roomMemberLabel(member: Pick<RoomMember, "display_name" | "device_id">): string {
+  const raw =
+    typeof member.display_name === "string" ? member.display_name.trim() : "";
+  if (raw) return raw;
+  const short = member.device_id.replace(/-/g, "").slice(0, 4);
+  return short ? `Guest ${short}` : "Guest";
+}
+
+function roomMemberInitial(member: Pick<RoomMember, "display_name" | "device_id">): string {
+  const ch = roomMemberLabel(member).charAt(0);
+  return ch ? ch.toUpperCase() : "?";
 }
 
 const STORAGE_ROOM_KEY = "radiant_findmy_room";
@@ -203,7 +217,12 @@ export default function FindMyController({
   useEffect(() => {
     const friends = members
       .filter((m) => m.device_id !== deviceId.current)
-      .map((m) => ({ id: m.device_id, lat: m.lat, lng: m.lng, name: m.display_name }));
+      .map((m) => ({
+        id: m.device_id,
+        lat: m.lat,
+        lng: m.lng,
+        name: roomMemberLabel(m),
+      }));
     onFriendLocationsChange(friends);
   }, [members, onFriendLocationsChange]);
 
@@ -500,14 +519,19 @@ export default function FindMyController({
                             )}
                           >
                             <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-900/60 ring-1 ring-teal-500/30 text-xs font-bold text-teal-300">
-                              {member.display_name.charAt(0).toUpperCase()}
+                              {roomMemberInitial(member)}
                               {isMe && (
                                 <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-teal-400" />
                               )}
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-xs font-semibold text-white">
-                                {member.display_name}{isMe && <span className="ml-1 text-[9px] font-normal text-teal-500">(you)</span>}
+                                {roomMemberLabel(member)}
+                                {isMe && (
+                                  <span className="ml-1 text-[9px] font-normal text-teal-500">
+                                    (you)
+                                  </span>
+                                )}
                               </p>
                               <p className="text-[10px] text-gray-600">{timeAgo(member.updated_at)}</p>
                             </div>

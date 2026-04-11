@@ -28,7 +28,7 @@ export type GeolocationMode = "full" | "routing";
  *
  * - `full` (default): cached fix first (instant if recent), then GPS capped at 12s, then network fallback — ~23s worst case.
  * - `routing`: favours cached / network fixes first, caps ~14s — avoids blocking
- *   “Get safe route” on long GPS timeouts indoors.
+ *   “Get Safe Route” on long GPS timeouts indoors.
  */
 export async function getCurrentPositionBestEffort(
   options?: { mode?: GeolocationMode }

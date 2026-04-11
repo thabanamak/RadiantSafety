@@ -829,10 +829,16 @@ export default function Dashboard() {
   const requestContextualSafeRoute = useCallback(
     async (destinationOverride?: SelectedDestination | null) => {
     const dest = destinationOverride ?? selectedDestination;
-    if (!dest) return;
+
+    if (!dest) {
+      console.warn("[SafeRoute] no destination set");
+      setRouteError("Please search for a destination first.");
+      return;
+    }
 
     const destPair = lngLatTuple(dest.coordinates);
     if (!destPair) {
+      console.warn("[SafeRoute] destination has no valid coordinates", dest);
       setRouteError("That place is missing map coordinates. Choose it again from search or directions.");
       return;
     }
@@ -879,20 +885,23 @@ export default function Dashboard() {
           const p = await getCurrentPositionBestEffort({ mode: "routing" });
           originLat = p.latitude;
           originLng = p.longitude;
-        } catch {
-          if (!mapCenter) {
-            setRouteLoading(false);
-            setRouteLoadingPhase(null);
-            setRouteError(
-              "Could not get your location in time. Pan the map so your starting area is visible, then try again — or enable location permission."
+        } catch (geoErr) {
+          console.warn("[SafeRoute] GPS failed:", geoErr);
+          // Fall back to map center, then Melbourne CBD
+          if (mapCenter) {
+            originLat = mapCenter.latitude;
+            originLng = mapCenter.longitude;
+            setRouteInfo(
+              "GPS unavailable — this route starts from the map center. Enable location for your position."
             );
-            return;
+          } else {
+            // Last resort: Melbourne CBD
+            originLat = -37.8136;
+            originLng = 144.9631;
+            setRouteInfo(
+              "GPS unavailable — route starts from Melbourne CBD. Enable location for your position."
+            );
           }
-          originLat = mapCenter.latitude;
-          originLng = mapCenter.longitude;
-          setRouteInfo(
-            "GPS timed out — this route starts from the map center. Pan the map if needed, or enable location for your position."
-          );
         }
       }
       if (!isWithinSafenetCoverage(originLng, originLat)) {
@@ -904,13 +913,15 @@ export default function Dashboard() {
       setRouteLoadingPhase("route");
     }
 
+    console.log("[SafeRoute] routing", {
+      origin: { lat: originLat, lng: originLng },
+      dest: { lat: destLat, lng: destLng },
+    });
+
     try {
       const engineMode = readSafeRouteEngineMode();
       let clientPathComputed = false;
-      /** Grid A* path — kept in scope for hybrid fallbacks when the server or street-snap fails. */
       let clientPath: [number, number][] | null = null;
-      // Holds the in-flight street-snap promise so hybrid mode can await it
-      // if the server upgrade fails and we need to display the snapped path.
       let snapPromise: Promise<[number, number][] | null> | null = null;
 
       if (engineMode === "client" || engineMode === "hybrid") {
@@ -920,22 +931,20 @@ export default function Dashboard() {
             { latitude: destLat, longitude: destLng },
             routingIncidents,
           );
-        } catch {
-          throw new Error("__UNROUTABLE__");
+          console.log("[SafeRoute] client A* result:", clientPath ? `${clientPath.length} points` : "null");
+        } catch (astarErr) {
+          console.warn("[SafeRoute] client A* threw:", astarErr);
+          if (engineMode === "client") throw new Error("__UNROUTABLE__");
+          // hybrid: fall through to server
         }
         if (clientPath) {
           clientPathComputed = true;
-          // Start the street-snap in the background immediately.
           snapPromise = snapRouteToStreets(clientPath);
           if (engineMode === "client") {
-            // Client-only: wait for the snapped path before displaying anything
-            // so the route always follows real streets.
             const snapped = await snapPromise;
             setSafeRouteData(snapped ?? clientPath);
             return;
           }
-          // hybrid: keep clientPath + snapPromise in memory as a silent fallback;
-          // don't render the raw grid path — the server result will be shown first.
         } else if (engineMode === "client") {
           throw new Error("__UNROUTABLE__");
         }
@@ -971,28 +980,28 @@ export default function Dashboard() {
           try {
             data = (await res.json()) as typeof data;
           } catch {
+            console.warn("[SafeRoute] server response not JSON");
             throw new Error("__UNROUTABLE__");
           }
 
+          console.log("[SafeRoute] server response:", res.status, data.error_code ?? "ok");
+
           if (!res.ok) {
-            // Backend unreachable — if we already have a client-computed path, keep it silently
             if (res.status === 503 && data.error_code === "BACKEND_UNAVAILABLE") {
               if (clientPathComputed) {
-                setRouteInfo("Showing grid-based route — Python routing service is offline.");
+                setRouteInfo("Showing street-snapped route — Python routing service is offline.");
                 const snapped = snapPromise ? await snapPromise : null;
                 const fallback = snapped ?? clientPath;
                 if (fallback && fallback.length >= 2) {
                   setSafeRouteData(fallback);
                 } else {
-                  setRouteError("Could not compute route.");
+                  setRouteError("Could not compute route. Enable location and try again.");
                 }
                 return;
               }
               throw new Error("__BACKEND_UNAVAILABLE__");
             }
-            if (res.status === 404) {
-              throw new Error("__UNROUTABLE__");
-            }
+            if (res.status === 404) throw new Error("__UNROUTABLE__");
             const d = data.detail;
             let msg =
               typeof d === "string"
@@ -1000,11 +1009,10 @@ export default function Dashboard() {
                 : Array.isArray(d)
                   ? d.map((x: { msg?: string }) => x?.msg ?? "").filter(Boolean).join("; ")
                   : "Route request failed";
-            const extra: string[] = [];
-            if (typeof data.hint === "string") extra.push(data.hint);
-            if (extra.length) msg = [msg, ...extra].join(" ");
+            if (typeof data.hint === "string") msg = [msg, data.hint].join(" ");
             throw new Error(msg.trim() || "Route request failed");
           }
+
           const line = responseToLineFeature(data);
           const serverCoords = line.geometry.coordinates;
           if (!Array.isArray(serverCoords) || serverCoords.length < 2) {
@@ -1012,13 +1020,9 @@ export default function Dashboard() {
           }
           setSafeRouteData(serverCoords as [number, number][]);
         } catch (serverErr) {
-          // In hybrid mode: server failed — use the snapped client path as fallback.
-          // Await the street-snap (started in parallel earlier) so the displayed
-          // fallback path follows real footpaths instead of cutting through buildings.
+          console.warn("[SafeRoute] server error:", serverErr);
           if (engineMode === "hybrid" && clientPathComputed) {
             const snapped = snapPromise ? await snapPromise : null;
-            // snapPromise resolves to null on failure; in that case we have no path to show
-            // (we never showed the raw grid path, so better to surface an error).
             if (!snapped) {
               if (clientPath && clientPath.length >= 2) {
                 setSafeRouteData(clientPath);
@@ -1056,6 +1060,7 @@ export default function Dashboard() {
         }
       }
     } catch (e) {
+      console.error("[SafeRoute] unhandled error:", e);
       setSafeRouteData(null);
       if (e instanceof Error && e.message === "__UNROUTABLE__") {
         setToastMessage(SAFENET_UNROUTABLE_ERROR);
@@ -1220,7 +1225,9 @@ export default function Dashboard() {
           routeLoadingPhase={routeLoadingPhase}
           routeError={routeError}
           routeInfo={routeInfo}
-          onGetSafeRoute={requestContextualSafeRoute}
+          onGetSafeRoute={() => {
+            void requestContextualSafeRoute();
+          }}
           onClose={closeDirectionsPlanner}
         />
       )}
@@ -1233,7 +1240,9 @@ export default function Dashboard() {
           routeLoadingPhase={routeLoadingPhase}
           routeError={routeError}
           routeInfo={routeInfo}
-          onGetSafeRoute={requestContextualSafeRoute}
+          onGetSafeRoute={() => {
+            void requestContextualSafeRoute();
+          }}
           onCloseDestination={closeDestinationCard}
           onEndRoute={endContextualRoute}
         />

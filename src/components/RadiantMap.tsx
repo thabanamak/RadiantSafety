@@ -249,6 +249,26 @@ export default function RadiantMap({
   crimeIntensityFilter,
 }: RadiantMapProps) {
   const mapRef = useRef<MapRef>(null);
+
+  // Memoize the contextual route GeoJSON so react-map-gl only calls
+  // source.setData() when the coordinates array reference actually changes,
+  // not on every map-move / zoom render.
+  const contextualRouteGeoJSON = useMemo((): GeoJSON.Feature<GeoJSON.LineString> | null => {
+    if (!contextualRouteCoordinates || contextualRouteCoordinates.length < 2) return null;
+    // Deduplicate consecutive identical points to prevent micro-loops.
+    const deduped: [number, number][] = [contextualRouteCoordinates[0]];
+    for (let i = 1; i < contextualRouteCoordinates.length; i++) {
+      const prev = deduped[deduped.length - 1];
+      const cur = contextualRouteCoordinates[i];
+      if (cur[0] !== prev[0] || cur[1] !== prev[1]) deduped.push(cur);
+    }
+    if (deduped.length < 2) return null;
+    return {
+      type: "Feature",
+      properties: {},
+      geometry: { type: "LineString", coordinates: deduped },
+    };
+  }, [contextualRouteCoordinates]);
   const mapShellRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const lastReportedCenterRef = useRef<{
@@ -421,8 +441,8 @@ export default function RadiantMap({
   }, [safeRouteLine]);
 
   useEffect(() => {
-    const coords = contextualRouteCoordinates;
-    if (!coords?.length || coords.length < 2 || !mapRef.current) return;
+    if (!contextualRouteGeoJSON || !mapRef.current) return;
+    const coords = contextualRouteGeoJSON.geometry.coordinates as [number, number][];
     const lngs = coords.map((c) => c[0]);
     const lats = coords.map((c) => c[1]);
     mapRef.current.fitBounds(
@@ -432,7 +452,7 @@ export default function RadiantMap({
       ],
       { padding: { top: 100, bottom: 200, left: 48, right: 48 }, duration: 1400, pitch: 40 }
     );
-  }, [contextualRouteCoordinates]);
+  }, [contextualRouteGeoJSON]);
 
   const onMove = useCallback(
     (evt: { viewState: { latitude: number; longitude: number; zoom: number } }) => {
@@ -581,15 +601,12 @@ export default function RadiantMap({
         </Source>
       )}
 
-      {contextualRouteCoordinates && contextualRouteCoordinates.length >= 2 && (
+      {contextualRouteGeoJSON && (
         <Source
+          key={`contextual-route-${contextualRouteGeoJSON.geometry.coordinates.length}`}
           id="contextual-safe-route"
           type="geojson"
-          data={{
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: contextualRouteCoordinates },
-          }}
+          data={contextualRouteGeoJSON}
         >
           <Layer {...contextualSafeRouteLayer} />
         </Source>
