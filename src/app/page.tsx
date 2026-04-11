@@ -1,7 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { DroppedPin } from "@/components/RadiantMap";
 
 /** Mapbox / react-map-gl touch `window` — must not SSR or the whole page can white-screen. */
@@ -14,9 +15,20 @@ const RadiantMap = dynamic(() => import("@/components/RadiantMap"), {
   ),
 });
 import TopNav from "@/components/TopNav";
-import type { AuthUser, IncidentTab } from "@/components/TopNav";
+import type { IncidentTab } from "@/components/TopNav";
 import QuickReportFAB, { type PinLocation } from "@/components/QuickReportFAB";
-import AuthModal from "@/components/AuthModal";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { isEmailLinkCallback } from "@/lib/auth-callback-url";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
+import type { AuthUser } from "@/lib/auth-storage";
+import {
+  clearStoredUser,
+  DEFAULT_REPUTATION_SCORE,
+  getStoredUser,
+  setStoredUser,
+} from "@/lib/auth-storage";
+import type { UserReputation } from "@/lib/types";
 import ContextualDirectionsCards from "@/components/ContextualDirectionsCards";
 import type { SelectedDestination } from "@/components/ContextualDirectionsCards";
 import RoutePlannerPanel from "@/components/RoutePlannerPanel";
@@ -45,7 +57,7 @@ import FindMyController from "@/features/find-my/FindMyController";
 import DirectionsController from "@/features/directions/DirectionsController";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
-import { LocateFixed, LocateOff, Loader2 } from "lucide-react";
+import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 interface VicPolIncident {
@@ -70,9 +82,58 @@ interface SupabaseIncident {
   is_verified: boolean;
 }
 
-type ModalState = "closed" | "login" | "signup";
+function reputationForAuthUser(user: AuthUser): UserReputation {
+  const score = user.reputationScore ?? DEFAULT_REPUTATION_SCORE;
+  return {
+    score,
+    label: score >= 70 ? "Trusted" : "Community",
+    isTrusted: score >= 70,
+  };
+}
+
+function WelcomeBanner({ authUser }: { authUser: AuthUser | null }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const showWelcome = searchParams.get("welcome") === "1";
+  const visible = showWelcome && authUser !== null;
+
+  useEffect(() => {
+    if (!visible) return;
+    const timer = window.setTimeout(() => {
+      router.replace("/", { scroll: false });
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [visible, router]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="pointer-events-auto absolute left-1/2 top-[72px] z-40 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl border border-emerald-500/35 bg-emerald-950/90 px-4 py-3 shadow-xl backdrop-blur-sm">
+      <div className="flex items-start gap-3">
+        <p className="flex-1 text-center text-sm leading-relaxed text-emerald-50 sm:text-left">
+          <span className="font-semibold text-white">
+            Welcome{authUser.name ? `, ${authUser.name}` : ""}!
+          </span>{" "}
+          You&apos;re signed in — your reputation starts at{" "}
+          {authUser.reputationScore ?? DEFAULT_REPUTATION_SCORE}. Explore the Pulse
+          and map to get started.
+        </p>
+        <button
+          type="button"
+          onClick={() => router.replace("/", { scroll: false })}
+          className="shrink-0 rounded-lg p-1 text-emerald-200/80 transition-colors hover:bg-emerald-900/50 hover:text-white"
+          aria-label="Dismiss"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [flyTarget, setFlyTarget] = useState<{
     latitude: number;
     longitude: number;
@@ -83,9 +144,6 @@ export default function Dashboard() {
 
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [modalState, setModalState] = useState<ModalState>("closed");
-
-
   const [vicpolLoaded, setVicpolLoaded] = useState(false);
   const [vicpolLoading, setVicpolLoading] = useState(false);
   const [vicpolItems, setVicpolItems] = useState<VicPolIncident[]>([]);
@@ -137,6 +195,65 @@ export default function Dashboard() {
 
   const dismissToast = useCallback(() => setToastMessage(null), []);
 
+  useEffect(() => {
+    if (pathname === "/") {
+      setAuthUser(getStoredUser());
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname !== "/") return;
+    let cancelled = false;
+    const { client, error } = getSupabaseBrowserClient();
+    if (error || !client) return;
+    const supabase = client;
+
+    async function applySession(session: Session | null) {
+      if (cancelled) return;
+      if (!session?.user) {
+        if (typeof window !== "undefined" && isEmailLinkCallback()) {
+          return;
+        }
+        if (getStoredUser()?.id) {
+          clearStoredUser();
+          setAuthUser(null);
+        }
+        return;
+      }
+      try {
+        const u = await syncProfileFromAuthUser(supabase, session.user);
+        if (cancelled) return;
+        setStoredUser(u);
+        setAuthUser(u);
+        if (
+          typeof window !== "undefined" &&
+          (isEmailLinkCallback() || window.location.hash.length > 1)
+        ) {
+          router.replace("/?welcome=1", { scroll: false });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    void supabase.auth.getSession().then((res: { data: { session: Session | null } }) => {
+      void applySession(res.data.session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        void applySession(session);
+      }
+    );
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [pathname, router]);
+
   const handleViewMap = useCallback((report: UserReport) => {
     setFlyTarget({ latitude: report.latitude, longitude: report.longitude });
   }, []);
@@ -165,12 +282,24 @@ export default function Dashboard() {
     []
   );
 
-  const handleAuth = useCallback((user: AuthUser) => {
-    setAuthUser(user);
-  }, []);
-
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    const { client } = getSupabaseBrowserClient();
+    if (client) {
+      await client.auth.signOut();
+    }
+    clearStoredUser();
     setAuthUser(null);
+    router.replace("/", { scroll: false });
+  }, [router]);
+
+  const handleViewPastReports = useCallback(() => {
+    setActiveIncidentTab("user-reported");
+    setFlyTarget(null);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("user-reported-panel")
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, []);
 
   const loadVicPol = useCallback(async () => {
@@ -597,16 +726,19 @@ export default function Dashboard() {
           />
         </div>
 
+        <Suspense fallback={null}>
+          <WelcomeBanner authUser={authUser} />
+        </Suspense>
+
         <TopNav
-          reputation={currentUser}
+          reputation={authUser ? reputationForAuthUser(authUser) : currentUser}
           user={authUser}
           mapCenter={mapCenter}
           activeIncidentTab={activeIncidentTab}
           onIncidentTabChange={setActiveIncidentTab}
           onSearchSelectArea={handleSelectArea}
-          onLoginClick={() => {}}
-          onSignupClick={() => {}}
           onLogout={handleLogout}
+          onViewPastReports={handleViewPastReports}
           directionsMode={directionsMode}
           onDirectionsModeChange={(active) => {
             setDirectionsMode(active);
@@ -633,7 +765,10 @@ export default function Dashboard() {
 
         {/* User Reported empty state */}
         {activeIncidentTab === "user-reported" && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+          <div
+            id="user-reported-panel"
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+          >
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-radiant-border bg-radiant-surface/90 px-6 py-5 text-center shadow-xl backdrop-blur-xl">
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
@@ -722,11 +857,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      <AuthModal
-        isOpen={modalState !== "closed"}
-        onClose={() => setModalState("closed")}
-        onAuth={handleAuth}
-      />
     </main>
   );
 }

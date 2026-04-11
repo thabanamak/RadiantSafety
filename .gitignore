@@ -4,7 +4,8 @@
 .env*.local
 *.pem
 *.key
-supabase/
+# Supabase CLI project dir (repo root only — not `src/lib/supabase/` app code)
+/supabase/
 .supabase/
 # Keep these out so you don't leak your Mapbox/Supabase keys!
 
