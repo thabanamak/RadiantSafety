@@ -34,6 +34,7 @@ import QuickReportFAB, {
 } from "@/components/QuickReportFAB";
 import ReporterProfileModal from "@/components/ReporterProfileModal";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getDeviceId } from "@/lib/identity";
 import { isEmailLinkCallback } from "@/lib/auth-callback-url";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
@@ -374,6 +375,8 @@ export default function Dashboard() {
             lat: number;
             created_at: string;
           };
+          // Don't show the banner to the person who triggered it (e.g. their own SafeWalk expiry)
+          if (row.user_id === getDeviceId()) return;
           setIncomingSOS({
             friendName: "User " + row.user_id.substring(0, 4),
             coordinates: [row.lng, row.lat],

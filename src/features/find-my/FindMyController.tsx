@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Users, ChevronLeft, ChevronRight, MapPin, Copy, Check, LogOut, Radio } from "lucide-react";
+import { Users, ChevronLeft, ChevronRight, MapPin, Copy, Check, LogOut, Radio, AlertTriangle, X as XIcon, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
@@ -16,7 +16,9 @@ interface RoomMember {
   id: string;
   room_code: string;
   device_id: string;
-  /** May be absent on rows from DB / Realtime before backfill. */
+  /** Current column name after migration */
+  host_name?: string | null;
+  /** Legacy column name — kept for backwards-compat with old rows */
   display_name?: string | null;
   lat: number;
   lng: number;
@@ -68,22 +70,24 @@ function timeAgo(iso: string): string {
   return `${Math.floor(secs / 3600)}h ago`;
 }
 
-function roomMemberLabel(member: Pick<RoomMember, "display_name" | "device_id">): string {
+function roomMemberLabel(member: Pick<RoomMember, "host_name" | "display_name" | "device_id">): string {
   const raw =
-    typeof member.display_name === "string" ? member.display_name.trim() : "";
+    typeof member.host_name === "string" ? member.host_name.trim()
+    : typeof member.display_name === "string" ? member.display_name.trim()
+    : "";
   if (raw) return raw;
   const short = member.device_id.replace(/-/g, "").slice(0, 4);
   return short ? `Guest ${short}` : "Guest";
 }
 
-function roomMemberInitial(member: Pick<RoomMember, "display_name" | "device_id">): string {
+function roomMemberInitial(member: Pick<RoomMember, "host_name" | "display_name" | "device_id">): string {
   const ch = roomMemberLabel(member).charAt(0);
   return ch ? ch.toUpperCase() : "?";
 }
 
 const STORAGE_ROOM_KEY = "radiant_findmy_room";
 const STORAGE_NAME_KEY = "radiant_findmy_name";
-const SHARE_INTERVAL_MS = 10_000;
+const SHARE_INTERVAL_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -107,7 +111,15 @@ export default function FindMyController({
   // Friends list
   const [members, setMembers] = useState<RoomMember[]>([]);
 
-  // UI feedback
+  // Safe Walk alert from a room member
+  const [safeWalkAlert, setSafeWalkAlert] = useState<{
+    name: string;
+    firedAt: string;
+  } | null>(null);
+  const safeWalkAlertTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Tracks which device_ids in the room are currently in safe walk mode
+  const [safeWalkDevices, setSafeWalkDevices] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
@@ -148,31 +160,32 @@ export default function FindMyController({
     }
   }, [accountLabel]);
 
-  // Fetch existing members when room is joined
+  // Fetch existing members via API (uses service key — bypasses RLS)
   const fetchMembers = useCallback(async (code: string) => {
-    const sb = getSupabaseBrowser();
-    if (!sb) return;
-    const { data } = await sb
-      .from("friend_locations")
-      .select("*")
-      .eq("room_code", code.toUpperCase());
-    if (data) setMembers(data as RoomMember[]);
+    try {
+      const res = await fetch(`/api/friends/share?room_code=${encodeURIComponent(code.toUpperCase())}`);
+      if (!res.ok) return;
+      const json = (await res.json()) as { members?: RoomMember[] };
+      if (json.members) setMembers(json.members);
+    } catch {
+      /* ignore network errors */
+    }
   }, []);
 
   useEffect(() => {
     if (inRoom && roomCode) fetchMembers(roomCode);
   }, [inRoom, roomCode, fetchMembers]);
 
-  // Polling fallback — re-fetch the full member list every 10 s while in a room.
+  // Polling fallback — re-fetch the full member list every 3 s while in a room.
   // This guarantees the friends list stays current even when the Realtime filtered
   // subscription misses events (e.g. RLS policy not set up for postgres_changes).
   useEffect(() => {
     if (!inRoom || !roomCode) return;
-    const id = setInterval(() => fetchMembers(roomCode), 10_000);
+    const id = setInterval(() => fetchMembers(roomCode), 3_000);
     return () => clearInterval(id);
   }, [inRoom, roomCode, fetchMembers]);
 
-  // Realtime subscription — provides instant updates on top of the polling fallback
+  // Realtime subscription — postgres_changes for member list + broadcast for safe walk alerts
   useEffect(() => {
     if (!inRoom || !roomCode) return;
 
@@ -206,6 +219,45 @@ export default function FindMyController({
           }
         }
       )
+      .on(
+        "broadcast",
+        { event: "safewalk_status" },
+        (msg) => {
+          const payload = msg.payload as {
+            device_id?: string;
+            active?: boolean;
+          };
+          if (!payload.device_id) return;
+          setSafeWalkDevices((prev) => {
+            const next = new Set(prev);
+            if (payload.active) {
+              next.add(payload.device_id!);
+            } else {
+              next.delete(payload.device_id!);
+            }
+            return next;
+          });
+        }
+      )
+      .on(
+        "broadcast",
+        { event: "safewalk_expired" },
+        (msg) => {
+          const payload = msg.payload as {
+            device_id?: string;
+            display_name?: string;
+            fired_at?: string;
+          };
+          // Only show to other room members, not the person who triggered it
+          if (payload.device_id && payload.device_id === deviceId.current) return;
+          const name = payload.display_name || "A friend";
+          const firedAt = payload.fired_at ?? new Date().toISOString();
+          setSafeWalkAlert({ name, firedAt });
+          // Auto-dismiss after 30 seconds
+          if (safeWalkAlertTimeoutRef.current) clearTimeout(safeWalkAlertTimeoutRef.current);
+          safeWalkAlertTimeoutRef.current = setTimeout(() => setSafeWalkAlert(null), 30_000);
+        }
+      )
       .subscribe();
 
     return () => {
@@ -229,17 +281,25 @@ export default function FindMyController({
   // Location sharing interval
   const doShare = useCallback(async () => {
     if (!userCoords || !roomCode || !deviceId.current) return;
-    await fetch("/api/friends/share", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room_code: roomCode,
-        device_id: deviceId.current,
-        display_name: displayName,
-        lat: userCoords.latitude,
-        lng: userCoords.longitude,
-      }),
-    });
+    try {
+      const res = await fetch("/api/friends/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_code: roomCode,
+          device_id: deviceId.current,
+          host_name: displayName,
+          lat: userCoords.latitude,
+          lng: userCoords.longitude,
+        }),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { members?: RoomMember[] };
+        if (json.members) setMembers(json.members);
+      }
+    } catch {
+      /* ignore */
+    }
   }, [userCoords, roomCode, displayName]);
 
   useEffect(() => {
@@ -263,18 +323,23 @@ export default function FindMyController({
     setJoining(true);
     setJoinError("");
     try {
+      let joinedMembers: RoomMember[] | null = null;
       if (userCoords) {
-        await fetch("/api/friends/share", {
+        const res = await fetch("/api/friends/share", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             room_code: targetCode,
             device_id: deviceId.current,
-            display_name: name,
+            host_name: name,
             lat: userCoords.latitude,
             lng: userCoords.longitude,
           }),
         });
+        if (res.ok) {
+          const json = (await res.json()) as { members?: RoomMember[] };
+          if (json.members) joinedMembers = json.members;
+        }
       }
       setRoomCode(targetCode);
       setDisplayName(name);
@@ -282,10 +347,16 @@ export default function FindMyController({
       setSharing(!!userCoords);
       localStorage.setItem(STORAGE_ROOM_KEY, targetCode);
       localStorage.setItem(STORAGE_NAME_KEY, name);
+      // Use members from the join response, or fall back to a separate fetch
+      if (joinedMembers) {
+        setMembers(joinedMembers);
+      } else {
+        void fetchMembers(targetCode);
+      }
     } finally {
       setJoining(false);
     }
-  }, [roomInput, nameInput, displayName, userCoords]);
+  }, [roomInput, nameInput, displayName, userCoords, fetchMembers]);
 
   const handleCreate = useCallback(() => {
     const code = generateRoomCode();
@@ -303,6 +374,7 @@ export default function FindMyController({
     });
     setInRoom(false);
     setMembers([]);
+    setSafeWalkDevices(new Set());
     setRoomCode("");
     setRoomInput("");
     onFriendLocationsChange([]);
@@ -322,7 +394,67 @@ export default function FindMyController({
   // Render
   // ---------------------------------------------------------------------------
   return (
-    <div className="pointer-events-auto fixed left-0 top-[148px] z-40 flex items-start gap-0">
+    <>
+      {/* Safe Walk expired alert — shown to room members only, not the person who triggered it */}
+      {safeWalkAlert && (
+        <div className="pointer-events-auto fixed inset-0 z-[200] flex items-center justify-center px-5">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              setSafeWalkAlert(null);
+              if (safeWalkAlertTimeoutRef.current) clearTimeout(safeWalkAlertTimeoutRef.current);
+            }}
+          />
+
+          {/* Card */}
+          <div className="relative w-full max-w-md overflow-hidden rounded-3xl border-2 border-orange-500/60 bg-black/98 shadow-[0_0_80px_rgba(249,115,22,0.4)] backdrop-blur-xl">
+            <div className="pointer-events-none absolute -inset-px animate-pulse rounded-3xl bg-orange-500/15 blur-sm" />
+
+            <div className="relative px-6 py-7">
+              {/* Dismiss */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSafeWalkAlert(null);
+                  if (safeWalkAlertTimeoutRef.current) clearTimeout(safeWalkAlertTimeoutRef.current);
+                }}
+                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-xl text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-300"
+                aria-label="Dismiss"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+
+              {/* Icon */}
+              <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-2xl bg-orange-500/20 ring-2 ring-orange-500/50">
+                <AlertTriangle className="h-10 w-10 animate-pulse text-orange-400" />
+              </div>
+
+              {/* Label */}
+              <p className="mb-2 text-center text-sm font-black uppercase tracking-widest text-orange-400">Safe Walk Alert</p>
+
+              {/* Name */}
+              <p className="text-center text-2xl font-black text-white">{safeWalkAlert.name}</p>
+              <p className="mt-1 text-center text-base font-semibold text-orange-300">didn&apos;t check in</p>
+              <p className="mt-1.5 text-center text-sm text-gray-400">They may need help — check in with them.</p>
+
+              {/* Dismiss button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSafeWalkAlert(null);
+                  if (safeWalkAlertTimeoutRef.current) clearTimeout(safeWalkAlertTimeoutRef.current);
+                }}
+                className="mt-6 w-full rounded-2xl border border-white/15 bg-white/5 py-3.5 text-sm font-semibold text-gray-300 transition-all hover:bg-white/10 active:scale-95"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="pointer-events-auto fixed left-0 top-[148px] z-40 flex items-start gap-0">
       {/* Toggle tab */}
       <button
         onClick={() => setOpen((p) => !p)}
@@ -457,7 +589,7 @@ export default function FindMyController({
                   <div>
                     <p className="text-xs font-semibold text-white">Share my location</p>
                     <p className="text-[10px] text-gray-500">
-                      {!userCoords ? "Enable device location first" : sharing ? "Updating every 10s" : "Off — friends can't see you"}
+                      {!userCoords ? "Enable device location first" : sharing ? "Updating every 5s" : "Off — friends can't see you"}
                     </p>
                   </div>
                   <button
@@ -507,6 +639,7 @@ export default function FindMyController({
                     <ul className="flex flex-col gap-1">
                       {members.map((member) => {
                         const isMe = member.device_id === deviceId.current;
+                        const isSafeWalking = safeWalkDevices.has(member.device_id);
                         const dist = userCoords
                           ? haversine(userCoords.latitude, userCoords.longitude, member.lat, member.lng)
                           : null;
@@ -523,17 +656,30 @@ export default function FindMyController({
                               {isMe && (
                                 <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-black bg-teal-400" />
                               )}
+                              {isSafeWalking && !isMe && (
+                                <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center rounded-full border border-black bg-green-500">
+                                  <ShieldCheck className="h-2 w-2 text-white" />
+                                </span>
+                              )}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs font-semibold text-white">
+                              <p className="flex items-center gap-1 truncate text-xs font-semibold text-white">
                                 {roomMemberLabel(member)}
                                 {isMe && (
-                                  <span className="ml-1 text-[9px] font-normal text-teal-500">
+                                  <span className="text-[9px] font-normal text-teal-500">
                                     (you)
                                   </span>
                                 )}
+                                {isSafeWalking && (
+                                  <ShieldCheck className="h-3 w-3 shrink-0 text-green-400" title="Safe Walk active" />
+                                )}
                               </p>
-                              <p className="text-[10px] text-gray-600">{timeAgo(member.updated_at)}</p>
+                              <p className="text-[10px] text-gray-600">
+                                {isSafeWalking
+                                  ? <span className="text-green-500/80">Safe Walk active</span>
+                                  : timeAgo(member.updated_at)
+                                }
+                              </p>
                             </div>
                             {!isMe && dist !== null && (
                               <div className="shrink-0 text-right">
@@ -564,5 +710,6 @@ export default function FindMyController({
         </div>
       </div>
     </div>
+    </>
   );
 }
