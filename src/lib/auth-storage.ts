@@ -1,5 +1,5 @@
 export interface AuthUser {
-  /** Supabase `auth.users` id — use to match `profiles.id` / `past_reports.user_id`. */
+  /** Supabase `auth.users` id — matches `profiles.id`. */
   id?: string;
   name: string;
   email: string;

@@ -6,10 +6,7 @@ import { X } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isEmailLinkCallback } from "@/lib/auth-callback-url";
 import { isEmailConfirmed } from "@/lib/supabase-user";
-import {
-  fetchPastReportsForUser,
-  syncProfileFromAuthUser,
-} from "@/lib/supabase/profile-sync";
+import { syncProfileFromAuthUser } from "@/lib/supabase/profile-sync";
 import { setStoredUser } from "@/lib/auth-storage";
 import RadiantMap from "@/components/RadiantMap";
 import TopNav from "@/components/TopNav";
@@ -92,7 +89,17 @@ function EmailConfirmSync({
 function WelcomeBanner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  if (searchParams.get("welcome") !== "1") return null;
+  const showWelcome = searchParams.get("welcome") === "1";
+
+  useEffect(() => {
+    if (!showWelcome) return;
+    const timer = window.setTimeout(() => {
+      router.replace("/", { scroll: false });
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [showWelcome, router]);
+
+  if (!showWelcome) return null;
 
   const user = getStoredUser();
 
@@ -131,7 +138,6 @@ export default function Dashboard() {
 
   const [activeTab, setActiveTab] = useState<DashboardTab>("pulse");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [pastReportsCount, setPastReportsCount] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
@@ -140,7 +146,7 @@ export default function Dashboard() {
     }
   }, [pathname]);
 
-  /** Re-sync profile + past reports from Supabase so UI never shows another user’s cached name (e.g. old localStorage). */
+  /** Re-sync profile from Supabase so UI never shows another user’s cached name (e.g. old localStorage). */
   useEffect(() => {
     if (pathname !== "/") return;
     let cancelled = false;
@@ -155,15 +161,12 @@ export default function Dashboard() {
           clearStoredUser();
           if (!cancelled) setAuthUser(null);
         }
-        if (!cancelled) setPastReportsCount(0);
         return;
       }
       const u = await syncProfileFromAuthUser(client, session.user);
       if (cancelled) return;
       setStoredUser(u);
       setAuthUser(u);
-      const reports = await fetchPastReportsForUser(client, u.id ?? session.user.id);
-      if (!cancelled) setPastReportsCount(reports.length);
     })();
     return () => {
       cancelled = true;
@@ -246,7 +249,6 @@ export default function Dashboard() {
             authUser ? reputationForAuthUser(authUser) : mockCurrentUser
           }
           user={authUser}
-          pastReportsCount={pastReportsCount}
           reports={activeTab === "news" ? [] : userReports}
           onSearchSelectIncident={handleViewMap}
           onSearchSelectArea={handleSelectArea}
