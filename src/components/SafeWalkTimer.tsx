@@ -5,10 +5,15 @@ import { ShieldCheck, X, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { getDeviceId } from "@/lib/identity";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
-const DURATION_S = process.env.NODE_ENV === "development" ? 120 : 5 * 60;
+const DURATION_S = process.env.NODE_ENV === "development" ? 15 : 5 * 60;
 const RADIUS = 36;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+const STATUS_HEARTBEAT_MS = 30_000;
+
+const STORAGE_ROOM_KEY = "radiant_findmy_room";
+const STORAGE_NAME_KEY = "radiant_findmy_name";
 
 interface SafeWalkTimerProps {
   userCoords: { latitude: number; longitude: number } | null;
@@ -19,12 +24,95 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
   const [remaining, setRemaining] = useState(DURATION_S);
   const [sosFired, setSosFired] = useState(false);
   const coordsRef = useRef(userCoords);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => { coordsRef.current = userCoords; }, [userCoords]);
+
+  // Helper: send a safewalk_status broadcast on the room channel
+  const broadcastStatus = useCallback((active: boolean) => {
+    const roomCode = typeof window !== "undefined"
+      ? localStorage.getItem(STORAGE_ROOM_KEY)
+      : null;
+    if (!roomCode) return;
+    const displayName = (typeof window !== "undefined"
+      ? localStorage.getItem(STORAGE_NAME_KEY)
+      : null) ?? "";
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+
+    // Reuse the persistent channel if already subscribed
+    if (!channelRef.current) {
+      channelRef.current = sb.channel(`findmy-room-${roomCode.toUpperCase()}`);
+      channelRef.current.subscribe();
+    }
+    void channelRef.current.send({
+      type: "broadcast",
+      event: "safewalk_status",
+      payload: {
+        device_id: getDeviceId(),
+        display_name: displayName || "A friend",
+        active,
+        updated_at: new Date().toISOString(),
+      },
+    });
+  }, []);
+
+  // Announce safe walk active on mount, clean up on unmount
+  useEffect(() => {
+    broadcastStatus(true);
+    const heartbeat = setInterval(() => broadcastStatus(true), STATUS_HEARTBEAT_MS);
+    return () => {
+      clearInterval(heartbeat);
+      broadcastStatus(false);
+      if (channelRef.current) {
+        const sb = getSupabaseBrowser();
+        if (sb) void sb.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [broadcastStatus]);
 
   const fireSOS = useCallback(async () => {
     const coords = coordsRef.current;
     setSosFired(true);
+
+    // 1. Notify friends in the room via Realtime broadcast
+    const roomCode = typeof window !== "undefined"
+      ? localStorage.getItem(STORAGE_ROOM_KEY)
+      : null;
+    const displayName = typeof window !== "undefined"
+      ? (localStorage.getItem(STORAGE_NAME_KEY) ?? "")
+      : "";
+
+    if (roomCode) {
+      try {
+        const sb = getSupabaseBrowser();
+        if (sb) {
+          // Reuse persistent channel
+          if (!channelRef.current) {
+            channelRef.current = sb.channel(`findmy-room-${roomCode.toUpperCase()}`);
+            channelRef.current.subscribe();
+          }
+          await new Promise<void>((resolve) => {
+            void channelRef.current!.send({
+              type: "broadcast",
+              event: "safewalk_expired",
+              payload: {
+                device_id: getDeviceId(),
+                display_name: displayName || "A friend",
+                room_code: roomCode.toUpperCase(),
+                fired_at: new Date().toISOString(),
+              },
+            });
+            setTimeout(resolve, 300);
+          });
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
+    // 2. Also insert into active_sos for verified responders (existing behaviour)
     if (coords) {
       const { latitude, longitude } = coords;
       try {
@@ -38,9 +126,10 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
           });
         }
       } catch {
-        // best-effort — alert is shown locally regardless
+        // best-effort
       }
     }
+
     // Reset the timer after 3 s so the user can continue walking
     setTimeout(() => {
       setSosFired(false);
@@ -148,7 +237,7 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
                 sosFired ? "text-red-400 font-semibold" : isUrgent ? "text-orange-400" : "text-gray-500",
               )}>
                 {sosFired
-                  ? "SOS sent to friends!"
+                  ? "Friends in your room notified!"
                   : isUrgent
                     ? "Tap now if you're safe!"
                     : "Tap every 5 min to check in"}
@@ -175,3 +264,4 @@ export default function SafeWalkTimer({ userCoords, onEnd }: SafeWalkTimerProps)
     </div>
   );
 }
+

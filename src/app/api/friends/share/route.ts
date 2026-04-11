@@ -2,6 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
 import { syncFriendRoomMembers } from "@/lib/friend-locations-sync";
 
+export async function GET(req: NextRequest) {
+  const room_code = req.nextUrl.searchParams.get("room_code");
+  if (!room_code) {
+    return NextResponse.json({ error: "room_code is required" }, { status: 400 });
+  }
+  const supabase = getSupabase();
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
+  }
+  const { data, error } = await supabase
+    .from("friend_locations")
+    .select("id, room_code, device_id, host_name, lat, lng, updated_at")
+    .eq("room_code", room_code.toUpperCase());
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true, members: data ?? [] });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
@@ -62,7 +81,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: syncErr }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    // Return the full member list so the client doesn't need a separate query
+    const { data: memberRows } = await supabase
+      .from("friend_locations")
+      .select("id, room_code, device_id, host_name, lat, lng, updated_at")
+      .eq("room_code", codeUpper);
+
+    return NextResponse.json({ ok: true, members: memberRows ?? [] });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unknown error" },

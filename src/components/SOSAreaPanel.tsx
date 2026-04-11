@@ -121,13 +121,13 @@ export default function SOSAreaPanel({
 
   useEffect(() => {
     if (!sosAlertIdToPrune) return;
-    setAlerts((prev) => {
-      const next = prev.filter((a) => a.id !== sosAlertIdToPrune);
-      onAlertsChange?.(next);
-      return next;
-    });
-    onSosPruneApplied?.();
-  }, [sosAlertIdToPrune, onAlertsChange, onSosPruneApplied]);
+      setAlerts((prev) => {
+        const next = prev.filter((a) => a.id !== sosAlertIdToPrune);
+        return next;
+      });
+      onAlertsChange?.(alerts.filter((a) => a.id !== sosAlertIdToPrune));
+      onSosPruneApplied?.();
+  }, [sosAlertIdToPrune, onAlertsChange, onSosPruneApplied, alerts]);
 
   // --- Realtime subscription (verified first responders only) ---------------
   useEffect(() => {
@@ -155,11 +155,9 @@ export default function SOSAreaPanel({
             distance_meters: dist,
             status: row.status ?? "pending",
           };
-          setAlerts((prev) => {
-            const next = [alert, ...prev];
-            onAlertsChange?.(next);
-            return next;
-          });
+          const next = [alert, ...alerts];
+          setAlerts(next);
+          onAlertsChange?.(next);
           setOpen(true);
         }
       )
@@ -170,11 +168,8 @@ export default function SOSAreaPanel({
         (payload) => {
           const row = payload.new as SOSAlert & { resolved_at?: string | null; status?: string };
           if (row.resolved_at || row.status === "resolved") {
-            setAlerts((prev) => {
-              const next = prev.filter((a) => a.id !== row.id);
-              onAlertsChange?.(next);
-              return next;
-            });
+            setAlerts((prev) => prev.filter((a) => a.id !== row.id));
+            onAlertsChange?.(alerts.filter((a) => a.id !== row.id));
             return;
           }
           setAlerts((prev) => {
@@ -196,9 +191,26 @@ export default function SOSAreaPanel({
               issue: (row.issue as SOSIssueType) ?? prevAlert.issue,
               distance_meters: dist,
             };
-            onAlertsChange?.(next);
             return next;
           });
+          onAlertsChange?.(
+            alerts.map((a) => {
+              if (a.id !== row.id) return a;
+              return {
+                ...a,
+                ...row,
+                issue: (row.issue as SOSIssueType) ?? a.issue,
+                distance_meters: userCoords
+                  ? haversine(
+                      userCoords.latitude,
+                      userCoords.longitude,
+                      row.location_lat ?? a.location_lat,
+                      row.location_lng ?? a.location_lng
+                    )
+                  : a.distance_meters,
+              };
+            })
+          );
         }
       )
       .subscribe();
@@ -206,7 +218,7 @@ export default function SOSAreaPanel({
     return () => {
       sb.removeChannel(channel);
     };
-  }, [userCoords, onAlertsChange, canReceiveSOSPings]);
+  }, [userCoords, onAlertsChange, canReceiveSOSPings, alerts]);
 
   const recentCount = alerts.filter(
     (a) => Date.now() - new Date(a.created_at).getTime() < 5 * 60 * 1000

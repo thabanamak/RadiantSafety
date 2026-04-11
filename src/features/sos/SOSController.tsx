@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { CheckCircle } from "lucide-react";
 import SOSAreaPanel, { type SOSAlert } from "@/components/SOSAreaPanel";
 import SOSIssueSheet, { type SOSIssueType } from "@/components/SOSIssueSheet";
 import SOSResolveSheet from "@/components/SOSResolveSheet";
@@ -62,6 +63,8 @@ export default function SOSController({
   const [responderModalAlert, setResponderModalAlert] = useState<SOSAlert | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState("");
+  // Persists the accepted alert so responder can mark resolved after modal closes
+  const [acceptedTask, setAcceptedTask] = useState<SOSAlert | null>(null);
 
   useEffect(() => {
     const raw = typeof window !== "undefined" ? localStorage.getItem(VICTIM_SOS_KEY) : null;
@@ -264,6 +267,7 @@ export default function SOSController({
         if (res.ok) {
           onAlertResolved?.(resolveAlertId);
           setPruneSosId(resolveAlertId);
+          setAcceptedTask((t) => (t?.id === resolveAlertId ? null : t));
           setVictimHandoff((v) => {
             if (v?.alertId === resolveAlertId) {
               try {
@@ -306,11 +310,15 @@ export default function SOSController({
           setAcceptError(j.error ?? "Could not accept this SOS.");
           return false;
         }
-        setResponderModalAlert((a) =>
-          a && a.id === alertId
-            ? { ...a, status: "accepted", responder_id: authUser?.id ?? a.responder_id }
-            : a
-        );
+        setResponderModalAlert((a) => {
+          if (a && a.id === alertId) {
+            const updated = { ...a, status: "accepted" as const, responder_id: authUser?.id ?? a.responder_id };
+            // Also persist as the accepted task for the persistent resolve button
+            setAcceptedTask(updated);
+            return updated;
+          }
+          return a;
+        });
         return true;
       } finally {
         setAccepting(false);
@@ -339,7 +347,6 @@ export default function SOSController({
         }}
         authUserId={authUser?.id}
         onAccept={handleResponderAccept}
-        onRequestDirections={(lat, lng) => onRequestRouteToSosLocation?.(lat, lng)}
         onMarkResolved={(id) => {
           setResponderModalAlert(null);
           setAcceptError("");
@@ -348,6 +355,18 @@ export default function SOSController({
         accepting={accepting}
         acceptError={acceptError}
       />
+
+      {/* Persistent resolve button — shown after responder accepts and closes the modal */}
+      {acceptedTask && responderModalAlert === null && (
+        <button
+          type="button"
+          onClick={() => setResolveCtx({ alertId: acceptedTask.id, mode: "responder" })}
+          className="pointer-events-auto fixed right-4 top-[140px] z-[115] flex items-center gap-2 rounded-xl border border-green-500/50 bg-green-950/90 px-3 py-2 text-xs font-bold text-green-300 shadow-lg shadow-green-900/30 backdrop-blur-xl transition-colors hover:bg-green-900/90"
+        >
+          <CheckCircle className="h-4 w-4" />
+          Mark SOS Resolved
+        </button>
+      )}
 
       <SOSAreaPanel
         userCoords={userCoords}
