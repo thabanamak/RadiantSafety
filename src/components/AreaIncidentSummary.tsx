@@ -53,16 +53,6 @@ function zoomRadiusKm(zoom: number) {
   return 7.5;
 }
 
-function tokenizeTitle(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .filter((w) => w.length >= 4)
-    .filter((w) => !["victoria", "police", "melbourne", "update", "appeal", "after"].includes(w));
-}
-
 export default function AreaIncidentSummary({
   center,
   vicpolItems,
@@ -108,23 +98,11 @@ export default function AreaIncidentSummary({
       .filter((i) => haversineKm(c, { lat: i.lat, lng: i.lng }) <= radiusKm);
 
     const local = [...vicpolLocal, ...supaLocal];
-    const total = local.length;
     const high = local.filter((i) => i.intensity >= 8).length;
     const mid = local.filter((i) => i.intensity >= 5 && i.intensity <= 7).length;
     const low = local.filter((i) => i.intensity <= 4).length;
 
-    const wordCounts = new Map<string, number>();
-    for (const i of local.slice(0, 40)) {
-      for (const w of tokenizeTitle(i.title)) {
-        wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
-      }
-    }
-    const topWords = [...wordCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([w]) => w);
-
-    return { radiusKm, total, high, mid, low, topWords };
+    return { radiusKm, high, mid, low };
   }, [center, vicpolItems, supabaseItems]);
 
   if (!active || !center || !summary) return null;
@@ -146,7 +124,7 @@ export default function AreaIncidentSummary({
         )}
         aria-label={panelOpen ? "Close area summary" : "Open area summary"}
       >
-        <BarChart3 className={cn("h-4 w-4", summary.total > 0 ? "text-cyan-400" : "text-gray-500")} />
+        <BarChart3 className={cn("h-4 w-4", (summary.high + summary.mid + summary.low) > 0 ? "text-cyan-400" : "text-gray-500")} />
         <span className="absolute bottom-0 left-0">
           {panelOpen ? (
             <ChevronRight className="h-2.5 w-2.5 text-gray-600" />
@@ -159,49 +137,39 @@ export default function AreaIncidentSummary({
       <div
         className={cn(
           "transition-all duration-300 ease-in-out",
-          panelOpen ? "w-[360px] overflow-visible opacity-100" : "w-0 overflow-hidden opacity-0"
+          panelOpen ? "w-[200px] overflow-visible opacity-100" : "w-0 overflow-hidden opacity-0"
         )}
       >
-        <div className="relative w-[360px] shrink-0">
+        <div className="relative w-[200px] shrink-0">
           <div
-            className={cn(
-              "pointer-events-auto rounded-l-2xl border-y border-l border-r-0 border-cyan-500/25 bg-radiant-surface/95 p-4 shadow-2xl shadow-cyan-900/20 backdrop-blur-xl"
-            )}
+            className="pointer-events-auto rounded-l-2xl border-y border-l border-r-0 border-cyan-500/25 bg-radiant-surface/95 px-3 py-2.5 shadow-2xl shadow-cyan-900/20 backdrop-blur-xl"
             onPointerDown={() => setInfoOpen(false)}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Area summary</p>
-                  <button
-                    type="button"
-                    aria-label="How offences are graded"
-                    className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-lg border border-radiant-border bg-radiant-card text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setInfoOpen((p) => !p);
-                    }}
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <p className="mt-1 text-sm font-semibold text-gray-100">
-                  Within ~{summary.radiusKm.toFixed(summary.radiusKm < 2 ? 1 : 0)} km of map center
-                </p>
-              </div>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Area Summary</p>
+              <button
+                type="button"
+                aria-label="How offences are graded"
+                className="pointer-events-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-radiant-border bg-radiant-card text-gray-400 transition-colors hover:border-gray-500 hover:text-gray-200"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setInfoOpen((p) => !p);
+                }}
+              >
+                <Info className="h-3 w-3" />
+              </button>
             </div>
-
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <Stat label="High (8–10)" value={summary.high} valueClass="text-red-300" />
-              <Stat label="Mid (5–7)" value={summary.mid} valueClass="text-amber-200" />
-              <Stat label="Low (1–4)" value={summary.low} valueClass="text-gray-200" />
+            <div className="grid grid-cols-3 gap-1.5">
+              <Stat label="High" value={summary.high} valueClass="text-red-300" />
+              <Stat label="Mid" value={summary.mid} valueClass="text-amber-200" />
+              <Stat label="Low" value={summary.low} valueClass="text-gray-200" />
             </div>
           </div>
 
           {infoOpen && (
             <div
-              className="pointer-events-auto absolute left-0 top-2 z-50 w-[340px] rounded-2xl border border-radiant-border bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl"
+              className="pointer-events-auto absolute right-0 top-full z-50 mt-1.5 w-[280px] rounded-2xl border border-radiant-border bg-radiant-surface/95 p-4 shadow-2xl backdrop-blur-xl"
               onPointerDown={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3">
@@ -257,9 +225,9 @@ function Stat({
   valueClass?: string;
 }) {
   return (
-    <div className="rounded-xl border border-radiant-border bg-radiant-card px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-600">{label}</p>
-      <p className={cn("mt-0.5 text-base font-bold text-gray-100", valueClass)}>{value}</p>
+    <div className="rounded-lg border border-radiant-border bg-radiant-card px-2.5 py-1.5 text-center">
+      <p className={cn("text-sm font-bold", valueClass)}>{value}</p>
+      <p className="text-[9px] font-semibold uppercase tracking-widest text-gray-600">{label}</p>
     </div>
   );
 }

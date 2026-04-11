@@ -26,6 +26,9 @@ interface SOSControllerProps {
   onAlertResolved?: (alertId: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Controlled open state for the "SOS in the Area" side panel. */
+  areaPanelOpen?: boolean;
+  onAreaPanelOpenChange?: (open: boolean) => void;
   /** When true, this device receives nearby SOS realtime + map pings (verified first responder). */
   canReceiveSOSPings: boolean;
   authUser?: AuthUser | null;
@@ -41,6 +44,8 @@ export default function SOSController({
   onAlertResolved,
   open,
   onOpenChange,
+  areaPanelOpen,
+  onAreaPanelOpenChange,
   canReceiveSOSPings,
   authUser,
   onRequestRouteToSosLocation,
@@ -377,6 +382,8 @@ export default function SOSController({
         onResponderOpen={canReceiveSOSPings ? setResponderModalAlert : undefined}
         sosAlertIdToPrune={pruneSosId}
         onSosPruneApplied={clearPruneSos}
+        open={areaPanelOpen}
+        onOpenChange={onAreaPanelOpenChange}
       />
 
       {open && (

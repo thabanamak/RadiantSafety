@@ -16,7 +16,6 @@ import {
   ExternalLink,
   ListFilter,
   Newspaper,
-  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -387,36 +386,15 @@ export default function NewsIncidentFeed({
               onClick={(e) => e.stopPropagation()}
             >
               <Newspaper className="h-3.5 w-3.5 shrink-0 text-radiant-red" />
-              <span className="truncate text-sm font-semibold text-gray-100">Crime News</span>
+              <span className="truncate text-sm font-semibold text-gray-100">VicPol Live</span>
               <ChevronUp className="h-4 w-4 shrink-0 text-gray-400 group-hover:text-gray-200 transition-colors" />
             </button>
-            <div ref={filterTriggerRef} className="shrink-0">
-              <button
-                type="button"
-                aria-label="Filter by crime severity"
-                aria-expanded={filterOpen}
-                aria-haspopup="listbox"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFilterOpen((o) => !o);
-                }}
-                className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors touch-manipulation",
-                  filterOpen
-                    ? "border-radiant-red/60 bg-radiant-dark text-gray-100"
-                    : "border-radiant-border bg-radiant-card text-gray-300 hover:border-gray-500 hover:text-white"
-                )}
-              >
-                <ListFilter className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
           </div>
         )}
 
         {isOpen && (
           <div className="relative z-50 flex shrink-0 flex-wrap items-center justify-between gap-2 px-5 pb-3">
-            <h2 className="text-lg font-bold text-gray-100">Crime News</h2>
+            <h2 className="text-lg font-bold text-gray-100">VicPol Live</h2>
             <div className="flex flex-wrap items-center gap-2">
               <div ref={filterTriggerRef} className="relative inline-block">
                 <button
@@ -440,10 +418,6 @@ export default function NewsIncidentFeed({
                     )}
                   />
                 </button>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <Zap className="h-3 w-3 text-radiant-green" />
-                Scraped Updates
               </div>
             </div>
           </div>
@@ -501,23 +475,6 @@ export default function NewsIncidentFeed({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {item.latitude != null && item.longitude != null && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onViewMap({
-                          latitude: item.latitude as number,
-                          longitude: item.longitude as number,
-                          zoom: 16,
-                        });
-                      }}
-                      className="rounded-lg border border-radiant-border bg-radiant-dark px-2.5 py-1.5 text-[11px] font-semibold text-gray-300 hover:border-gray-500 hover:text-white"
-                      aria-label="Fly to map"
-                    >
-                      Fly
-                    </button>
-                  )}
                   {item.url && (
                     <a
                       href={item.url}
@@ -553,6 +510,11 @@ export default function NewsIncidentFeed({
 
               {summaries[item.id] && (
                 <p className="mt-3 text-[12px] leading-relaxed text-gray-300">
+                  {item.publishedAt && (
+                    <span className="mr-1 text-[11px] font-medium text-gray-500">
+                      {new Date(item.publishedAt).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true }).replace(/\s/g, "").toUpperCase()}:
+                    </span>
+                  )}
                   {summaries[item.id]}
                 </p>
               )}

@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import {
-  LogIn,
-  UserPlus,
   LogOut,
   ChevronDown,
   ShieldAlert,
@@ -11,8 +9,6 @@ import {
   Navigation,
   UserCircle,
   Settings,
-  Shield,
-  Hospital,
   Upload,
   Loader2,
   X,
@@ -25,7 +21,6 @@ import { cn } from "@/lib/cn";
 import type { UserReputation } from "@/lib/types";
 import type { AuthUser } from "@/lib/auth-storage";
 import SearchBar from "./SearchBar";
-import MapVisibilitySwitch from "@/components/MapVisibilitySwitch";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { IntensityFilter } from "@/lib/map-crime-intensity-filter";
 
@@ -40,9 +35,9 @@ const CRIME_INTENSITY_SEGMENTS: {
   title: string;
 }[] = [
   { id: "all", label: "All", title: "Show all severities (default)" },
-  { id: "low", label: "Low", title: "Intensity 1–4" },
-  { id: "medium", label: "Med", title: "Intensity 5–7" },
   { id: "high", label: "High", title: "Intensity 8–10" },
+  { id: "medium", label: "Med", title: "Intensity 5–7" },
+  { id: "low", label: "Low", title: "Intensity 1–4" },
 ];
 
 interface TopNavProps {
@@ -61,10 +56,6 @@ interface TopNavProps {
   onLogout: () => void;
   directionsMode?: boolean;
   onDirectionsModeChange?: (active: boolean) => void;
-  showPoliceOnMap: boolean;
-  onShowPoliceOnMapChange: (next: boolean) => void;
-  showHealthFacilitiesOnMap: boolean;
-  onShowHealthFacilitiesOnMapChange: (next: boolean) => void;
   routingActive?: boolean;
   /** Merge into signed-in user after profile updates (e.g. responder verification). */
   onAuthUserPatch?: (patch: Partial<AuthUser>) => void;
@@ -82,10 +73,6 @@ export default function TopNav({
   onLogout,
   directionsMode = false,
   onDirectionsModeChange,
-  showPoliceOnMap,
-  onShowPoliceOnMapChange,
-  showHealthFacilitiesOnMap,
-  onShowHealthFacilitiesOnMapChange,
   routingActive = false,
   onAuthUserPatch,
   crimeIntensityFilter,
@@ -135,22 +122,12 @@ export default function TopNav({
               onAuthUserPatch={onAuthUserPatch}
             />
           ) : (
-            <div className="flex items-center gap-2">
-              <Link
-                href="/login"
-                className="flex items-center gap-1.5 rounded-lg border border-radiant-border px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-              >
-                <LogIn className="h-3.5 w-3.5" />
-                Log In
-              </Link>
-              <Link
-                href="/signup"
-                className="flex items-center gap-1.5 rounded-lg bg-radiant-red px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-red-500/20 transition-all hover:shadow-red-500/40"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Sign Up
-              </Link>
-            </div>
+            <Link
+              href="/signup"
+              className="flex items-center gap-1.5 rounded-lg bg-radiant-red px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-red-500/20 transition-all hover:shadow-red-500/40"
+            >
+              Get Started
+            </Link>
           )}
         </div>
       </div>
@@ -182,38 +159,6 @@ export default function TopNav({
               ) : null
             }
           />
-          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 sm:gap-x-6">
-            <div className="flex items-center gap-2">
-              <Shield className="h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Police
-              </span>
-              <MapVisibilitySwitch
-                id="toggle-police-map"
-                on={showPoliceOnMap}
-                onToggle={() => onShowPoliceOnMapChange(!showPoliceOnMap)}
-                activeClass="bg-sky-600 focus-visible:ring-sky-500"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Hospital
-                className="h-3.5 w-3.5 shrink-0 text-red-400"
-                strokeWidth={2.25}
-                aria-hidden
-              />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Medical
-              </span>
-              <MapVisibilitySwitch
-                id="toggle-medical-map"
-                on={showHealthFacilitiesOnMap}
-                onToggle={() =>
-                  onShowHealthFacilitiesOnMapChange(!showHealthFacilitiesOnMap)
-                }
-                activeClass="bg-red-600 focus-visible:ring-red-500"
-              />
-            </div>
-          </div>
         </div>
 
         {/* Incident tab pills + collapsible crime layer filter */}
@@ -248,7 +193,7 @@ export default function TopNav({
               </button>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-black/40 shadow-lg backdrop-blur-md">
+            <div className="relative rounded-2xl border border-white/10 bg-black/40 shadow-lg backdrop-blur-md">
               <button
                 type="button"
                 onClick={() => setCrimeLayerOpen((o) => !o)}
@@ -268,11 +213,11 @@ export default function TopNav({
                 />
               </button>
               {crimeLayerOpen ? (
-                <div className="border-t border-white/10 px-2 pb-2 pt-1.5">
+                <div className="absolute left-0 top-full z-50 mt-1 rounded-2xl border border-white/10 bg-black/40 p-1 shadow-lg backdrop-blur-md">
                   <div
                     role="toolbar"
                     aria-label="Heatmap intensity filter"
-                    className="flex max-w-[17rem] flex-wrap gap-0.5 rounded-lg bg-black/35 p-0.5 ring-1 ring-white/5 sm:max-w-[18rem]"
+                    className="flex gap-0.5"
                   >
                     {CRIME_INTENSITY_SEGMENTS.map(({ id, label, title }) => {
                       const active = crimeIntensityFilter === id;
@@ -284,9 +229,9 @@ export default function TopNav({
                           aria-pressed={active}
                           onClick={() => onCrimeIntensityFilterChange(id)}
                           className={cn(
-                            "min-h-[36px] min-w-[2.75rem] flex-1 rounded-md px-2 py-1.5 text-center text-[11px] font-semibold tracking-tight transition-[color,background-color,box-shadow,transform] duration-200 ease-out sm:text-xs",
+                            "min-h-[32px] min-w-[2.75rem] flex-1 rounded-xl px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide transition-[color,background-color,box-shadow,transform] duration-200 ease-out",
                             active
-                              ? "bg-gradient-to-b from-orange-500/95 to-orange-600/95 text-white shadow-md shadow-orange-900/40 ring-1 ring-orange-300/35"
+                              ? "bg-radiant-red text-white shadow-md shadow-red-500/30"
                               : "text-neutral-400 hover:bg-white/8 hover:text-neutral-100 active:scale-[0.98]"
                           )}
                         >

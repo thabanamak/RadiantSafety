@@ -19,14 +19,14 @@ import { explainGeoError, getCurrentPositionBestEffort } from "@/lib/geolocation
 import type { ReportCategory } from "@/lib/types";
 
 const CATEGORIES: ReportCategory[] = [
-  "Gang Activity",
-  "Unsafe Vibe",
-  "Poor Lighting",
-  "Theft",
+  "Physical Altercation",
   "Harassment",
-  "Suspicious Activity",
-  "Vandalism",
-  "Drug Activity",
+  "Theft / Robbery",
+  "Public Disturbance",
+  "Suspicious Behavior",
+  "Substance Use",
+  "Property Damage",
+  "Environmental Hazard",
 ];
 
 export type PinLocation = {
@@ -273,7 +273,7 @@ export default function QuickReportFAB({
               </button>
             </div>
 
-            {/* Safe Walk — slot above main FAB (was incident report) */}
+            {/* Safe Walk — above main FAB */}
             <div className="group absolute right-0 bottom-0 z-[1] -translate-y-[72px] transition-transform duration-300 ease-out">
               <div className="pointer-events-none absolute bottom-full right-1/2 mb-2 translate-x-1/2 opacity-0 transition-opacity group-hover:opacity-100">
                 <div className="relative rounded-2xl border border-radiant-border bg-black/90 px-3.5 py-2 text-center text-[11px] font-semibold tracking-wide text-gray-50 shadow-2xl shadow-black/50 backdrop-blur-xl">

@@ -5,14 +5,14 @@ import type { ReportCategory } from "@/lib/types";
  * Must stay in sync with `scripts/user-reports-table.sql` generated `severity` column.
  */
 const SEVERITY: Record<ReportCategory, number> = {
-  "Gang Activity": 10,
-  Harassment: 9,
-  "Poor Lighting": 8,
-  "Drug Activity": 8,
-  "Unsafe Vibe": 7,
-  Theft: 7,
-  Vandalism: 6,
-  "Suspicious Activity": 5,
+  "Physical Altercation": 10,
+  "Harassment": 9,
+  "Environmental Hazard": 8,
+  "Substance Use": 8,
+  "Public Disturbance": 7,
+  "Theft / Robbery": 7,
+  "Property Damage": 6,
+  "Suspicious Behavior": 5,
 };
 
 export function getSeverityForCategory(category: ReportCategory): number {

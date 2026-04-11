@@ -63,6 +63,9 @@ interface SOSAreaPanelProps {
   /** After a successful resolve API call, drop this id from the local feed (Realtime may be blocked by RLS). */
   sosAlertIdToPrune?: string | null;
   onSosPruneApplied?: () => void;
+  /** Controlled open state — parent can close/open the panel externally. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export default function SOSAreaPanel({
@@ -74,8 +77,15 @@ export default function SOSAreaPanel({
   onResponderOpen,
   sosAlertIdToPrune,
   onSosPruneApplied,
+  open: openProp,
+  onOpenChange,
 }: SOSAreaPanelProps) {
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp !== undefined ? openProp : openInternal;
+  const setOpen = (v: boolean) => {
+    setOpenInternal(v);
+    onOpenChange?.(v);
+  };
   const [alerts, setAlerts] = useState<SOSAlert[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -229,11 +239,11 @@ export default function SOSAreaPanel({
     <div className="pointer-events-auto flex items-start gap-0">
       {/* Toggle tab */}
       <button
-        onClick={() => setOpen((p) => !p)}
+        onClick={() => setOpen(!open)}
         className={cn(
           "relative flex h-10 w-8 items-center justify-center rounded-r-xl border border-l-0 transition-all",
-          "border-red-500/30 bg-black/90 shadow-lg shadow-red-900/20 backdrop-blur-xl",
-          "hover:bg-red-500/10 active:scale-95"
+          "border-white/15 bg-black/90 shadow-lg backdrop-blur-xl",
+          "hover:bg-white/10 active:scale-95"
         )}
         aria-label={open ? "Close SOS panel" : "Open SOS in the area"}
       >

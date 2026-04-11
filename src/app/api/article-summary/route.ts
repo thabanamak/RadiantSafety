@@ -55,6 +55,8 @@ function stripHtml(html: string): string {
     .replace(/\b(Acting\s+)?(Sergeant|Senior\s+Constable|Detective|Inspector|Superintendent)\b[^.]{0,120}\bMedia\s+Unit\b[^.]{0,60}\b/gi, " ")
     // Long runs of reference numbers
     .replace(/\b\d{5,}\b/g, " ")
+    // Strip "Published:" label but keep the date value
+    .replace(/Published\s*:\s*/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }

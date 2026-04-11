@@ -35,14 +35,14 @@ export type MapIncidentPoint = {
 };
 
 export type ReportCategory =
-  | "Gang Activity"
-  | "Unsafe Vibe"
-  | "Poor Lighting"
-  | "Theft"
+  | "Physical Altercation"
   | "Harassment"
-  | "Suspicious Activity"
-  | "Vandalism"
-  | "Drug Activity";
+  | "Theft / Robbery"
+  | "Public Disturbance"
+  | "Suspicious Behavior"
+  | "Substance Use"
+  | "Property Damage"
+  | "Environmental Hazard";
 
 export interface UserReputation {
   score: number;

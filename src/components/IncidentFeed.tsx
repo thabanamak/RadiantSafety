@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronUp,
   Zap,
-  MapPin,
   ThumbsUp,
   ThumbsDown,
   CheckCircle,
@@ -436,7 +435,13 @@ function IncidentCard({
         </div>
       )}
 
-      <div className="rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onViewMap}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onViewMap(); }}
+        className="cursor-pointer rounded-xl border border-radiant-border bg-radiant-card p-4 transition-colors hover:border-gray-600"
+      >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-bold text-gray-100">{report.category}</h3>
@@ -444,9 +449,10 @@ function IncidentCard({
             <span className="text-[10px] uppercase tracking-wide text-gray-600">Reported by</span>
             <button
               type="button"
-              onClick={() =>
-                onOpenReporterProfile?.(reporterKey(report), reporterName(report))
-              }
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenReporterProfile?.(reporterKey(report), reporterName(report));
+              }}
               className={cn(
                 "inline-flex items-center gap-1 rounded-md border border-radiant-border bg-radiant-dark/80 px-2 py-0.5 text-[11px] font-medium text-sky-300 transition-colors",
                 onOpenReporterProfile && "hover:border-sky-500/50 hover:text-sky-200",
@@ -461,7 +467,7 @@ function IncidentCard({
             <div className="mt-2 flex gap-2">
               <button
                 type="button"
-                onClick={() => setEnlargedSrc(report.imageDataUrl!)}
+                onClick={(e) => { e.stopPropagation(); setEnlargedSrc(report.imageDataUrl!); }}
                 className="group relative shrink-0 rounded-md border border-radiant-border focus:outline-none focus-visible:ring-2 focus-visible:ring-radiant-red/60"
                 aria-label="View full size photo"
               >
@@ -498,7 +504,7 @@ function IncidentCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
           <VoteButton
             icon={ThumbsUp}
             label="Upvote"
@@ -520,7 +526,7 @@ function IncidentCard({
             onClick={() => void handleVote("down")}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           {canDelete && (
             <button
               type="button"
@@ -531,14 +537,6 @@ function IncidentCard({
               Delete
             </button>
           )}
-          <button
-            type="button"
-            onClick={onViewMap}
-            className="flex items-center gap-1.5 rounded-lg border border-radiant-border bg-radiant-dark px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-          >
-            <MapPin className="h-3 w-3" />
-            View Map
-          </button>
         </div>
       </div>
     </div>

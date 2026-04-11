@@ -346,6 +346,9 @@ export default function Dashboard() {
   // SOS — sheet open state is owned here so the FAB can trigger it;
   // all other SOS logic lives in SOSController
   const [showSOSSheet, setShowSOSSheet] = useState(false);
+  const [findMyOpen, setFindMyOpen] = useState(false);
+  // Only one left-edge panel open at a time
+  const [sosAreaOpen, setSosAreaOpen] = useState(false);
   const [showSafeWalk, setShowSafeWalk] = useState(false);
   const [showHotspotNudge, setShowHotspotNudge] = useState(false);
   const nudgeDismissedUntil = useRef<number>(0);
@@ -414,9 +417,6 @@ export default function Dashboard() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const dismissToast = useCallback(() => setToastMessage(null), []);
-
-  const [showPoliceOnMap, setShowPoliceOnMap] = useState(true);
-  const [showHealthFacilitiesOnMap, setShowHealthFacilitiesOnMap] = useState(true);
 
   useEffect(() => {
     if (pathname === "/") {
@@ -571,7 +571,7 @@ export default function Dashboard() {
           latitude: i.latitude as number,
           longitude: i.longitude as number,
           intensity: i.intensity,
-          category: "Suspicious Activity",
+          category: "Suspicious Behavior",
         })),
     [vicpolItems]
   );
@@ -583,7 +583,7 @@ export default function Dashboard() {
         latitude: i.location_lat,
         longitude: i.location_lng,
         intensity: i.intensity,
-        category: "Suspicious Activity",
+        category: "Suspicious Behavior",
       })),
     [supabaseItems]
   );
@@ -1313,8 +1313,8 @@ export default function Dashboard() {
           contextualDestination={contextualDestinationMarker}
           contextualOrigin={contextualOriginMarker}
           contextualRouteCoordinates={safeRouteData}
-          policeStations={showPoliceOnMap ? VIC_POLICE_STATIONS : []}
-          healthFacilities={showHealthFacilitiesOnMap ? VIC_HEALTH_FACILITIES : []}
+          policeStations={VIC_POLICE_STATIONS}
+          healthFacilities={VIC_HEALTH_FACILITIES}
           crimeIntensityFilter={crimeIntensityFilter}
         />
       </div>
@@ -1369,7 +1369,15 @@ export default function Dashboard() {
               setSosMapAlerts((prev) => prev.filter((a) => a.id !== alertId))
             }
             open={showSOSSheet}
-            onOpenChange={setShowSOSSheet}
+            onOpenChange={(v) => {
+              setShowSOSSheet(v);
+              if (v) setFindMyOpen(false);
+            }}
+            areaPanelOpen={sosAreaOpen}
+            onAreaPanelOpenChange={(v) => {
+              setSosAreaOpen(v);
+              if (v) setFindMyOpen(false);
+            }}
             canReceiveSOSPings={canReceiveSOSPings}
             authUser={authUser}
             onRequestRouteToSosLocation={requestRouteToSosLocation}
@@ -1377,7 +1385,7 @@ export default function Dashboard() {
         </div>
 
         {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-5 top-[92px] z-[110] hidden w-[360px] lg:block">
+          <div className="pointer-events-auto absolute right-0 top-[148px] z-[110] hidden w-[200px] lg:block">
             <AreaIncidentSummary
               center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
               vicpolItems={vicpolItems}
@@ -1462,10 +1470,6 @@ export default function Dashboard() {
           setRouteError(null);
           setRouteInfo(null);
         }}
-        showPoliceOnMap={showPoliceOnMap}
-        onShowPoliceOnMapChange={setShowPoliceOnMap}
-        showHealthFacilitiesOnMap={showHealthFacilitiesOnMap}
-        onShowHealthFacilitiesOnMapChange={setShowHealthFacilitiesOnMap}
         routingActive={routingStatus !== "off"}
         onAuthUserPatch={handleAuthUserPatch}
         crimeIntensityFilter={crimeIntensityFilter}
@@ -1488,6 +1492,11 @@ export default function Dashboard() {
         userCoords={userCoords}
         onFriendLocationsChange={setFriendLocations}
         authUser={authUser}
+        open={findMyOpen}
+        onOpenChange={(v) => {
+          setFindMyOpen(v);
+          if (v) setSosAreaOpen(false);
+        }}
       />
       <DirectionsController
         userCoords={userCoords}

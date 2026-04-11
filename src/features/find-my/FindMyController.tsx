@@ -30,6 +30,9 @@ interface FindMyControllerProps {
   onFriendLocationsChange: (locations: FriendLocation[]) => void;
   /** When set, the friend-room display name uses the account name (no manual name field). */
   authUser?: AuthUser | null;
+  /** Controlled open state — when provided the parent can close the panel externally. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 function findMyAccountLabel(authUser: AuthUser | null | undefined): string | null {
@@ -97,8 +100,15 @@ export default function FindMyController({
   userCoords,
   onFriendLocationsChange,
   authUser,
+  open: openProp,
+  onOpenChange,
 }: FindMyControllerProps) {
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp !== undefined ? openProp : openInternal;
+  const setOpen = (v: boolean) => {
+    setOpenInternal(v);
+    onOpenChange?.(v);
+  };
 
   // Room + identity state
   const [roomCode, setRoomCode] = useState<string>("");
@@ -457,11 +467,11 @@ export default function FindMyController({
       <div className="pointer-events-auto fixed left-0 top-[148px] z-40 flex items-start gap-0">
       {/* Toggle tab */}
       <button
-        onClick={() => setOpen((p) => !p)}
+        onClick={() => setOpen(!open)}
         className={cn(
           "relative flex h-10 w-8 items-center justify-center rounded-r-xl border border-l-0 transition-all",
-          "border-teal-500/30 bg-black/90 shadow-lg shadow-teal-900/20 backdrop-blur-xl",
-          "hover:bg-teal-500/10 active:scale-95"
+          "border-white/15 bg-black/90 shadow-lg backdrop-blur-xl",
+          "hover:bg-white/10 active:scale-95"
         )}
         aria-label={open ? "Close Find My panel" : "Open Find My Friends"}
       >

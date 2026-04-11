@@ -30,14 +30,14 @@ type UserReportRow = {
 function isReportCategory(c: string): c is ReportCategory {
   return (
     [
-      "Gang Activity",
-      "Unsafe Vibe",
-      "Poor Lighting",
-      "Theft",
+      "Physical Altercation",
       "Harassment",
-      "Suspicious Activity",
-      "Vandalism",
-      "Drug Activity",
+      "Theft / Robbery",
+      "Public Disturbance",
+      "Suspicious Behavior",
+      "Substance Use",
+      "Property Damage",
+      "Environmental Hazard",
     ] as const
   ).includes(c as ReportCategory);
 }
@@ -58,7 +58,7 @@ function rowToUserReport(
   self: { id: string; name: string } | null | undefined,
   myVote: "up" | "down" | null | undefined
 ): UserReport {
-  const cat = isReportCategory(row.category) ? row.category : "Suspicious Activity";
+  const cat = isReportCategory(row.category) ? row.category : "Suspicious Behavior";
   const trustPoints =
     typeof row.trust === "number" && Number.isFinite(row.trust)
       ? row.trust
