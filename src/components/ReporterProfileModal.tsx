@@ -1,12 +1,35 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { X, MapPin, FileText, Trash2, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { UserReport } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { fetchPublicProfile, voteProfile, type PublicProfileRow } from "@/lib/supabase-profiles";
+import {
+  fetchMyProfileVote,
+  fetchPublicProfile,
+  voteProfile,
+  type ProfileVoteSide,
+  type PublicProfileRow,
+} from "@/lib/supabase-profiles";
 import { getTrustDisplayText } from "@/lib/report-trust";
+import {
+  formatReportExactTimestamp,
+  formatReportRelativeAge,
+} from "@/lib/relative-time";
+
+/** Matches DB: `reputation` generated as (50 + upvotes - downvotes). */
+function profileAfterToggleOff(
+  p: PublicProfileRow,
+  direction: "up" | "down"
+): PublicProfileRow {
+  if (direction === "up") {
+    const upvotes = Math.max(0, p.upvotes - 1);
+    return { ...p, upvotes, reputation: 50 + upvotes - p.downvotes };
+  }
+  const downvotes = Math.max(0, p.downvotes - 1);
+  return { ...p, downvotes, reputation: 50 + p.upvotes - downvotes };
+}
 
 interface ReporterProfileModalProps {
   open: boolean;
@@ -32,6 +55,10 @@ export default function ReporterProfileModal({
   const [profile, setProfile] = useState<PublicProfileRow | null>(null);
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
   const [profileBusy, setProfileBusy] = useState(false);
+  const [myProfileVote, setMyProfileVote] = useState<ProfileVoteSide | null>(null);
+  const [voteError, setVoteError] = useState<string | null>(null);
+  /** Invalidates in-flight fetchMyProfileVote so it cannot overwrite after a successful vote. */
+  const profileVoteFetchGen = useRef(0);
 
   const loadProfile = useCallback(async () => {
     if (!reporterId.trim()) return;
@@ -50,8 +77,35 @@ export default function ReporterProfileModal({
 
   useEffect(() => {
     if (!open || !reporterId.trim()) return;
+    setVoteError(null);
     void loadProfile();
   }, [open, reporterId, loadProfile]);
+
+  useEffect(() => {
+    if (!open || !reporterId.trim() || !currentUserId?.trim() || !profile) {
+      setMyProfileVote(null);
+      return;
+    }
+    if (
+      reporterId.trim().toLowerCase() === currentUserId.trim().toLowerCase()
+    ) {
+      setMyProfileVote(null);
+      return;
+    }
+    const { client } = getSupabaseBrowserClient();
+    if (!client) return;
+    let cancelled = false;
+    const gen = ++profileVoteFetchGen.current;
+    void (async () => {
+      const v = await fetchMyProfileVote(client, reporterId);
+      if (!cancelled && gen === profileVoteFetchGen.current) {
+        setMyProfileVote(v);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, reporterId, currentUserId, profile?.id]);
 
   useEffect(() => {
     if (!open || !reporterId.trim()) return;
@@ -99,17 +153,59 @@ export default function ReporterProfileModal({
     };
   }, [open, reporterId]);
 
+  const isOwnProfile =
+    Boolean(currentUserId) &&
+    reporterId.trim().toLowerCase() === (currentUserId ?? "").trim().toLowerCase();
+
+  const canVote =
+    Boolean(currentUserId) &&
+    Boolean(profile) &&
+    !isOwnProfile;
+
+  const voteTitleHint =
+    !currentUserId
+      ? "Sign in to vote"
+      : isOwnProfile
+        ? "You can't vote on your own profile"
+        : undefined;
+
+  const voteControlDisabled = !canVote || profileBusy;
+
+  const voteControlTitle = profileBusy
+    ? "Saving vote…"
+    : !canVote && voteTitleHint
+      ? voteTitleHint
+      : undefined;
+
   const handleProfileVote = async (direction: "up" | "down") => {
-    if (!currentUserId || !reporterId.trim() || profileBusy) return;
+    if (!canVote || profileBusy) return;
     const { client } = getSupabaseBrowserClient();
     if (!client) return;
+
+    const previousVote = myProfileVote;
+    const optimisticVote: ProfileVoteSide | null =
+      previousVote === direction ? null : direction;
+    const previousProfileSnapshot = profile;
+
+    setVoteError(null);
+    setMyProfileVote(optimisticVote);
+    if (profile && previousVote === direction) {
+      setProfile(profileAfterToggleOff(profile, direction));
+    }
+
     setProfileBusy(true);
     try {
       const result = await voteProfile(client, reporterId, direction);
       if (!result.ok) {
         console.warn("[RadiantSafety] vote_profile:", result.error);
+        setMyProfileVote(previousVote);
+        if (previousProfileSnapshot) setProfile(previousProfileSnapshot);
+        setVoteError(result.error);
         return;
       }
+      profileVoteFetchGen.current += 1;
+      setMyProfileVote(result.myVote ?? optimisticVote);
+      setVoteError(null);
       setProfile((prev) =>
         prev
           ? {
@@ -130,11 +226,6 @@ export default function ReporterProfileModal({
       setProfileBusy(false);
     }
   };
-
-  const canVoteProfile =
-    Boolean(currentUserId) &&
-    Boolean(profile) &&
-    reporterId.trim().toLowerCase() !== (currentUserId ?? "").trim().toLowerCase();
 
   if (!open) return null;
 
@@ -185,12 +276,9 @@ export default function ReporterProfileModal({
                 Reputation
               </p>
               {profile ? (
-                <div className="mt-1 flex flex-wrap items-center gap-2">
+                <div className="mt-1">
                   <span className="text-2xl font-bold tabular-nums text-gray-100">
                     {profile.reputation}
-                  </span>
-                  <span className="text-[10px] text-gray-500">
-                    ({profile.upvotes}↑ · {profile.downvotes}↓)
                   </span>
                 </div>
               ) : (
@@ -198,36 +286,61 @@ export default function ReporterProfileModal({
                   {profileLoadError ?? "Loading…"}
                 </p>
               )}
-              {canVoteProfile ? (
-                <div className="mt-2 flex items-center gap-2">
+              {profile ? (
+                <div
+                  className="mt-2 flex flex-col gap-2"
+                  role="group"
+                  aria-label="Approve or disapprove this profile"
+                >
                   <button
                     type="button"
-                    disabled={profileBusy}
+                    title={voteControlTitle}
+                    disabled={voteControlDisabled}
+                    aria-pressed={myProfileVote === "up"}
                     onClick={() => void handleProfileVote("up")}
-                    className="inline-flex items-center gap-1 rounded-md border border-radiant-border px-2 py-1 text-[11px] text-gray-300 transition-colors hover:border-emerald-500/50 hover:text-emerald-200 disabled:opacity-50"
+                    className={cn(
+                      "flex w-full items-center justify-start gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] transition-colors",
+                      voteControlDisabled && "cursor-not-allowed opacity-60",
+                      myProfileVote === "up"
+                        ? "border-emerald-400 bg-emerald-900/55 text-emerald-50 ring-1 ring-emerald-500/30"
+                        : "border-radiant-border text-gray-300 hover:border-gray-500"
+                    )}
                   >
-                    <ThumbsUp className="h-3 w-3" />
-                    Upvote profile
+                    <ThumbsUp className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                    <span>Approve profile</span>
                   </button>
                   <button
                     type="button"
-                    disabled={profileBusy}
+                    title={voteControlTitle}
+                    disabled={voteControlDisabled}
+                    aria-pressed={myProfileVote === "down"}
                     onClick={() => void handleProfileVote("down")}
-                    className="inline-flex items-center gap-1 rounded-md border border-radiant-border px-2 py-1 text-[11px] text-gray-300 transition-colors hover:border-red-500/40 hover:text-red-200 disabled:opacity-50"
+                    className={cn(
+                      "flex w-full items-center justify-start gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] transition-colors",
+                      voteControlDisabled && "cursor-not-allowed opacity-60",
+                      myProfileVote === "down"
+                        ? "border-red-400 bg-red-950/55 text-red-50 ring-1 ring-red-500/30"
+                        : "border-radiant-border text-gray-300 hover:border-gray-500"
+                    )}
                   >
-                    <ThumbsDown className="h-3 w-3" />
-                    Downvote profile
+                    <ThumbsDown className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                    <span>Disapprove profile</span>
                   </button>
+                  {voteError ? (
+                    <p className="text-[10px] text-red-400/90" role="alert">
+                      {voteError}
+                    </p>
+                  ) : null}
                 </div>
               ) : (
-                <p className="mt-2 text-[10px] text-gray-600">
-                  {!currentUserId
-                    ? "Sign in to vote on this profile."
-                    : reporterId.trim().toLowerCase() ===
-                      (currentUserId ?? "").trim().toLowerCase()
-                      ? "You can’t vote on your own profile."
-                      : "Create a profile (sign up flow) before others can vote on it."}
-                </p>
+                profileLoadError &&
+                profileLoadError !== "Loading…" && (
+                  <p className="mt-2 text-[10px] text-gray-600">
+                    {!currentUserId
+                      ? "Sign in to approve or disapprove this profile."
+                      : "This reporter needs a profile (completed signup) before others can vote."}
+                  </p>
+                )
               )}
             </div>
           </div>
@@ -248,7 +361,9 @@ export default function ReporterProfileModal({
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {sorted.map((r) => (
+              {sorted.map((r) => {
+                const nowMs = Date.now();
+                return (
                 <li
                   key={r.id}
                   className="rounded-xl border border-radiant-border bg-radiant-card p-3"
@@ -271,12 +386,12 @@ export default function ReporterProfileModal({
                       <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-gray-400">
                         {r.description}
                       </p>
-                      <p className="mt-1 text-[10px] text-gray-600">
-                        {r.createdAt.toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
-                      </p>
+                      <div className="mt-1 text-xs text-gray-600">
+                        <div>{formatReportRelativeAge(r.createdAt, nowMs)}</div>
+                        <div className="mt-0.5 tabular-nums text-xs text-gray-500">
+                          {formatReportExactTimestamp(r.createdAt)}
+                        </div>
+                      </div>
                     </div>
                     <div className="flex shrink-0 flex-col gap-1">
                       {canDeleteReport(r) && (
@@ -312,7 +427,8 @@ export default function ReporterProfileModal({
                     </div>
                   )}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>

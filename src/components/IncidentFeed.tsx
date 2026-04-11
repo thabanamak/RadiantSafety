@@ -17,7 +17,10 @@ import {
 import { cn } from "@/lib/cn";
 import type { UserReport } from "@/lib/types";
 import { getTrustDisplayKind, getTrustDisplayText } from "@/lib/report-trust";
-import { formatReportRelativeAge } from "@/lib/relative-time";
+import {
+  formatReportExactTimestamp,
+  formatReportRelativeAge,
+} from "@/lib/relative-time";
 
 interface IncidentFeedProps {
   reports: UserReport[];
@@ -482,16 +485,22 @@ function IncidentCard({
             verifiedBy={report.verifiedBy}
           />
         </div>
-        <span className="shrink-0 text-xs text-gray-500">
-          {nowMs == null ? "" : formatReportRelativeAge(report.createdAt, nowMs)}
-        </span>
+        <div className="shrink-0 text-right text-sm text-gray-500">
+          {nowMs == null ? null : (
+            <>
+              <div>{formatReportRelativeAge(report.createdAt, nowMs)}</div>
+              <div className="mt-0.5 text-xs tabular-nums text-gray-600">
+                {formatReportExactTimestamp(report.createdAt)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <VoteButton
             icon={ThumbsUp}
-            count={report.upvotes}
             label="Upvote"
             disabled={!canVote}
             busy={voteBusy}
@@ -502,7 +511,6 @@ function IncidentCard({
           />
           <VoteButton
             icon={ThumbsDown}
-            count={report.downvotes}
             label="Downvote"
             disabled={!canVote}
             busy={voteBusy}
@@ -540,7 +548,6 @@ function IncidentCard({
 
 function VoteButton({
   icon: Icon,
-  count,
   label,
   disabled,
   busy,
@@ -550,7 +557,6 @@ function VoteButton({
   onClick,
 }: {
   icon: typeof ThumbsUp;
-  count: number;
   label: string;
   disabled: boolean;
   busy: boolean;
@@ -589,7 +595,6 @@ function VoteButton({
       )}
     >
       <Icon className="h-3 w-3" />
-      {count}
     </button>
   );
 }
