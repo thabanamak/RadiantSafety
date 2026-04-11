@@ -89,26 +89,6 @@ export default function TopNav({
     <nav className="pointer-events-none fixed inset-x-0 top-0 z-[10000] flex flex-col bg-gradient-to-b from-black/70 via-black/40 to-transparent pb-4">
       <div className="pointer-events-auto relative z-50 flex items-center gap-4 px-5 py-3">
         <div className="flex shrink-0 items-center gap-3">
-          {user && (
-            <>
-              <div className="h-4 w-px bg-gray-700" />
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-100">
-                  {reputation.score}%
-                </span>
-                <span
-                  className={cn(
-                    "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                    reputation.isTrusted
-                      ? "bg-radiant-green/20 text-radiant-green"
-                      : "bg-yellow-500/20 text-yellow-400"
-                  )}
-                >
-                  {reputation.label}
-                </span>
-              </div>
-            </>
-          )}
         </div>
 
         <div className="flex-1" />
@@ -601,7 +581,7 @@ function AccountDropdown({
           {user.name}
           {user.over18Verified && (
             <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-400">
-              18+ verified
+              ✓
             </span>
           )}
         </span>

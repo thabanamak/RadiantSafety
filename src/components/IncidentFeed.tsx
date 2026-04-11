@@ -303,7 +303,7 @@ export default function IncidentFeed({
             <p className="py-8 text-center text-sm text-gray-500">
               {onlyMine && totalBeforeMineFilter > 0
                 ? "You don’t have any reports yet. Use the quick-report button (bottom-right) to file one."
-                : "No reports yet. Sign up as an 18+ verified user and use the quick-report button (bottom-right)."}
+                : "No reports yet. Sign up as an 18+ user and use the quick-report button (bottom-right)."}
             </p>
           ) : (
             <div className="flex flex-col gap-3">

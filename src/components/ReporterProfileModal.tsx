@@ -265,7 +265,7 @@ export default function ReporterProfileModal({
               {reporterDisplayName}
             </h2>
             <p className="mt-1 text-[11px] text-gray-500">
-              Verified 18+ reporter · {sorted.length} incident{sorted.length === 1 ? "" : "s"} filed
+              18+ reporter · {sorted.length} incident{sorted.length === 1 ? "" : "s"} filed
             </p>
             <p className="mt-0.5 truncate font-mono text-[10px] text-gray-600" title={reporterId}>
               ID: {reporterId}

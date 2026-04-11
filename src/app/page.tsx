@@ -1447,7 +1447,7 @@ export default function Dashboard() {
               <span className="text-2xl">📍</span>
               <p className="text-sm font-semibold text-gray-200">No user reports yet</p>
               <p className="text-xs text-gray-500">
-                Sign up with an 18+ verified account, then use the quick-report button to add one.
+                Sign up with an 18+ account, then use the quick-report button to add one.
               </p>
             </div>
           </div>
