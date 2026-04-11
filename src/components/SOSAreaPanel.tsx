@@ -87,6 +87,12 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
     fetchAlerts();
   }, [fetchAlerts]);
 
+  // Sync alert list to parent whenever it changes — done via useEffect so we
+  // never call a parent setState from inside a child state updater.
+  useEffect(() => {
+    onAlertsChange?.(alerts);
+  }, [alerts, onAlertsChange]);
+
   // --- Realtime subscription -------------------------------------------------
   useEffect(() => {
     const sb = getSupabaseBrowser();
@@ -107,11 +113,7 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
           );
           if (dist > 1000) return;
           const alert: SOSAlert = { ...row, distance_meters: dist };
-          setAlerts((prev) => {
-            const next = [alert, ...prev];
-            onAlertsChange?.(next);
-            return next;
-          });
+          setAlerts((prev) => [alert, ...prev]);
           setOpen(true);
         }
       )
@@ -121,12 +123,8 @@ export default function SOSAreaPanel({ userCoords, onFlyTo, onAlertsChange, onRe
         { event: "UPDATE", schema: "public", table: "sos_alerts" },
         (payload) => {
           const updated = payload.new as { id: string; resolved_at: string | null };
-          if (!updated.resolved_at) return; // not a resolve update
-          setAlerts((prev) => {
-            const next = prev.filter((a) => a.id !== updated.id);
-            onAlertsChange?.(next);
-            return next;
-          });
+          if (!updated.resolved_at) return;
+          setAlerts((prev) => prev.filter((a) => a.id !== updated.id));
         }
       )
       .subscribe();

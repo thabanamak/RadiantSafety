@@ -209,10 +209,12 @@ function AccountDropdown({
   user,
   reputation,
   onLogout,
+  onViewPastReports,
 }: {
   user: AuthUser;
   reputation: UserReputation;
   onLogout: () => void;
+  onViewPastReports: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
