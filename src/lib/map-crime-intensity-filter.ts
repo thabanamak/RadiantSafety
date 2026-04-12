@@ -8,6 +8,9 @@ export const CRIME_POINTS_LAYER_ID = "incidents-points";
 
 export type IntensityFilter = "all" | "high" | "medium" | "low";
 
+/** Controls which official data source is shown on the heatmap. */
+export type DataSourceFilter = "all" | "historical" | "live";
+
 /**
  * Mapbox filter on feature property `intensity` (1–10).
  * `null` clears the filter (show all features).

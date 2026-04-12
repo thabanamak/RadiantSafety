@@ -13,7 +13,8 @@ import {
   Loader2,
   X,
   ShieldCheck,
-  Layers,
+  Gauge,
+  Signal,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
@@ -22,7 +23,7 @@ import type { UserReputation } from "@/lib/types";
 import type { AuthUser } from "@/lib/auth-storage";
 import SearchBar from "./SearchBar";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import type { IntensityFilter } from "@/lib/map-crime-intensity-filter";
+import type { IntensityFilter, DataSourceFilter } from "@/lib/map-crime-intensity-filter";
 
 export type { AuthUser };
 
@@ -38,6 +39,16 @@ const CRIME_INTENSITY_SEGMENTS: {
   { id: "high", label: "High", title: "Intensity 8–10" },
   { id: "medium", label: "Med", title: "Intensity 5–7" },
   { id: "low", label: "Low", title: "Intensity 1–4" },
+];
+
+const DATA_SOURCE_SEGMENTS: {
+  id: DataSourceFilter;
+  label: string;
+  title: string;
+}[] = [
+  { id: "all",        label: "All",     title: "Combined: 2025 archive + live feed" },
+  { id: "historical", label: "2025",    title: "2025 archive data only" },
+  { id: "live",       label: "Live",    title: "Live scraped VicPol feed only" },
 ];
 
 interface TopNavProps {
@@ -61,6 +72,8 @@ interface TopNavProps {
   onAuthUserPatch?: (patch: Partial<AuthUser>) => void;
   crimeIntensityFilter: IntensityFilter;
   onCrimeIntensityFilterChange: (next: IntensityFilter) => void;
+  dataSourceFilter: DataSourceFilter;
+  onDataSourceFilterChange: (next: DataSourceFilter) => void;
 }
 
 export default function TopNav({
@@ -77,8 +90,11 @@ export default function TopNav({
   onAuthUserPatch,
   crimeIntensityFilter,
   onCrimeIntensityFilterChange,
+  dataSourceFilter,
+  onDataSourceFilterChange,
 }: TopNavProps) {
-  const [crimeLayerOpen, setCrimeLayerOpen] = useState(false);
+  const [severityOpen, setSeverityOpen] = useState(false);
+  const [feedOpen, setFeedOpen] = useState(false);
   /** Mapbox GL can promote the map above in-tree siblings; portal keeps chrome clickable. */
   const [navPortaled, setNavPortaled] = useState(false);
   useLayoutEffect(() => {
@@ -176,29 +192,25 @@ export default function TopNav({
             <div className="relative rounded-2xl border border-white/10 bg-black/40 shadow-lg backdrop-blur-md">
               <button
                 type="button"
-                onClick={() => setCrimeLayerOpen((o) => !o)}
-                aria-expanded={crimeLayerOpen}
+                onClick={() => { setSeverityOpen((o) => !o); setFeedOpen(false); }}
+                aria-expanded={severityOpen}
                 className="flex w-full min-w-0 items-center gap-2 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-white/5"
               >
-                <Layers className="h-3.5 w-3.5 shrink-0 text-neutral-500" aria-hidden />
+                <Gauge className="h-3.5 w-3.5 shrink-0 text-neutral-500" aria-hidden />
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                  Crime data layer
+                  Severity
                 </span>
                 <ChevronDown
                   className={cn(
                     "ml-auto h-4 w-4 shrink-0 text-gray-500 transition-transform duration-200",
-                    crimeLayerOpen && "rotate-180"
+                    severityOpen && "rotate-180"
                   )}
                   aria-hidden
                 />
               </button>
-              {crimeLayerOpen ? (
+              {severityOpen && (
                 <div className="absolute left-0 top-full z-50 mt-1 rounded-2xl border border-white/10 bg-black/40 p-1 shadow-lg backdrop-blur-md">
-                  <div
-                    role="toolbar"
-                    aria-label="Heatmap intensity filter"
-                    className="flex gap-0.5"
-                  >
+                  <div role="toolbar" aria-label="Heatmap intensity filter" className="flex gap-0.5">
                     {CRIME_INTENSITY_SEGMENTS.map(({ id, label, title }) => {
                       const active = crimeIntensityFilter === id;
                       return (
@@ -221,8 +233,58 @@ export default function TopNav({
                     })}
                   </div>
                 </div>
-              ) : null}
+              )}
             </div>
+
+            {/* Feed filter — only shown on Official Incidents tab */}
+            {activeIncidentTab === "official" && (
+              <div className="relative rounded-2xl border border-white/10 bg-black/40 shadow-lg backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => { setFeedOpen((o) => !o); setSeverityOpen(false); }}
+                  aria-expanded={feedOpen}
+                  className="flex w-full min-w-0 items-center gap-2 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-white/5"
+                >
+                  <Signal className="h-3.5 w-3.5 shrink-0 text-sky-500/70" aria-hidden />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                    {dataSourceFilter === "historical" ? "2025" : dataSourceFilter === "live" ? "Live" : "Feed"}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "ml-auto h-4 w-4 shrink-0 text-gray-500 transition-transform duration-200",
+                      feedOpen && "rotate-180"
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {feedOpen && (
+                  <div className="absolute left-0 top-full z-50 mt-1 rounded-2xl border border-white/10 bg-black/40 p-1 shadow-lg backdrop-blur-md">
+                    <div role="toolbar" aria-label="Data source filter" className="flex gap-0.5">
+                      {DATA_SOURCE_SEGMENTS.map(({ id, label, title }) => {
+                        const active = dataSourceFilter === id;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            title={title}
+                            aria-pressed={active}
+                            onClick={() => onDataSourceFilterChange(id)}
+                            className={cn(
+                              "min-h-[32px] min-w-[2.75rem] flex-1 rounded-xl px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide transition-[color,background-color,box-shadow,transform] duration-200 ease-out",
+                              active
+                                ? "bg-sky-600 text-white shadow-md shadow-sky-500/30"
+                                : "text-neutral-400 hover:bg-white/8 hover:text-neutral-100 active:scale-[0.98]"
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

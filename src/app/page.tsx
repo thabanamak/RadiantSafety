@@ -84,7 +84,7 @@ import { useUserLocation } from "@/hooks/useUserLocation";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { LocateFixed, LocateOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { IntensityFilter } from "@/lib/map-crime-intensity-filter";
+import type { IntensityFilter, DataSourceFilter } from "@/lib/map-crime-intensity-filter";
 import {
   deleteUserReport,
   fetchUserReports,
@@ -191,6 +191,7 @@ export default function Dashboard() {
 
   const [activeIncidentTab, setActiveIncidentTab] = useState<IncidentTab>("official");
   const [crimeIntensityFilter, setCrimeIntensityFilter] = useState<IntensityFilter>("all");
+  const [dataSourceFilter, setDataSourceFilter] = useState<DataSourceFilter>("all");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [reporterProfile, setReporterProfile] = useState<{
     id: string;
@@ -743,9 +744,13 @@ export default function Dashboard() {
 
   const reportsForRadiantMap = useMemo((): MapIncidentPoint[] => {
     if (activeIncidentTab === "user-reported") return userReportedMapPoints;
-    if (activeIncidentTab === "official") return officialCombinedMapPoints;
+    if (activeIncidentTab === "official") {
+      if (dataSourceFilter === "historical") return supabaseMapPoints;
+      if (dataSourceFilter === "live") return vicpolMapPoints;
+      return officialCombinedMapPoints;
+    }
     return supabaseMapPoints;
-  }, [activeIncidentTab, userReportedMapPoints, officialCombinedMapPoints, supabaseMapPoints]);
+  }, [activeIncidentTab, userReportedMapPoints, officialCombinedMapPoints, supabaseMapPoints, vicpolMapPoints, dataSourceFilter]);
 
   const handleLocateMe = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -1473,6 +1478,8 @@ export default function Dashboard() {
         onAuthUserPatch={handleAuthUserPatch}
         crimeIntensityFilter={crimeIntensityFilter}
         onCrimeIntensityFilterChange={setCrimeIntensityFilter}
+        dataSourceFilter={dataSourceFilter}
+        onDataSourceFilterChange={setDataSourceFilter}
       />
 
       <QuickReportFAB
