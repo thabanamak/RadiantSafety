@@ -1262,7 +1262,7 @@ export default function Dashboard() {
     Array.isArray(safeRouteData) && safeRouteData.length >= 2;
 
   return (
-    <main className="relative h-screen w-screen">
+    <main className="relative h-dvh w-screen">
       <RouteToast message={toastMessage} variant="error" onDismiss={dismissToast} />
 
       {/* Incoming SOS alert banner — Realtime INSERT on active_sos */}
@@ -1359,7 +1359,7 @@ export default function Dashboard() {
       <div className="pointer-events-none absolute inset-0 z-10">
         {/* Left panel — SOS in the Area (and all SOS sheets) */}
         {/* SOS / sheets rail — TopNav is portaled to document.body (z-[10000]) so Mapbox cannot cover it */}
-        <div className="pointer-events-auto absolute left-0 top-[92px] z-[110]">
+        <div className="pointer-events-auto fixed left-0 top-[calc(50%-30px)] z-[120] -translate-y-1/2">
           <SOSController
             userCoords={userCoords}
             onFlyTo={setFlyTarget}
@@ -1385,7 +1385,7 @@ export default function Dashboard() {
         </div>
 
         {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-0 top-[76px] z-[110] hidden w-[200px] lg:block">
+          <div className="pointer-events-auto absolute right-0 top-1/2 z-[110] w-[200px] -translate-y-1/2">
             <AreaIncidentSummary
               center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
               vicpolItems={vicpolItems}
@@ -1488,16 +1488,18 @@ export default function Dashboard() {
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
-      <FindMyController
-        userCoords={userCoords}
-        onFriendLocationsChange={setFriendLocations}
-        authUser={authUser}
-        open={findMyOpen}
-        onOpenChange={(v) => {
-          setFindMyOpen(v);
-          if (v) setSosAreaOpen(false);
-        }}
-      />
+      <div className="pointer-events-auto fixed left-0 top-[calc(50%+52px)] z-[120] -translate-y-1/2">
+        <FindMyController
+          userCoords={userCoords}
+          onFriendLocationsChange={setFriendLocations}
+          authUser={authUser}
+          open={findMyOpen}
+          onOpenChange={(v) => {
+            setFindMyOpen(v);
+            if (v) setSosAreaOpen(false);
+          }}
+        />
+      </div>
       <DirectionsController
         userCoords={userCoords}
         onRouteChange={setActiveRoute}

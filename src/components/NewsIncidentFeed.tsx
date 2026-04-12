@@ -55,9 +55,30 @@ type SheetState = "collapsed" | "half" | "full";
 /** Room for collapsed “Crime News” row + filter icon */
 const COLLAPSED_H = 56;
 
+/** Read iOS safe-area-inset-bottom in pixels (requires viewport-fit=cover). */
+function safeAreaBottom(): number {
+  if (typeof window === "undefined") return 0;
+  try {
+    const el = document.createElement("div");
+    el.style.cssText =
+      "position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden";
+    document.body.appendChild(el);
+    const h = el.getBoundingClientRect().height;
+    document.body.removeChild(el);
+    return h;
+  } catch {
+    return 0;
+  }
+}
+
 function snapHeights() {
   const vh = typeof window === "undefined" ? 800 : window.innerHeight;
-  return { collapsed: COLLAPSED_H, half: Math.round(vh * 0.45), full: Math.round(vh * 0.85) };
+  const safe = safeAreaBottom();
+  return {
+    collapsed: COLLAPSED_H + safe,
+    half: Math.round(vh * 0.45),
+    full: Math.round(vh * 0.85),
+  };
 }
 
 function closestSnap(h: number): SheetState {
@@ -372,7 +393,10 @@ export default function NewsIncidentFeed({
             </div>
           </button>
         ) : (
-          <div className="flex shrink-0 w-full touch-none select-none items-center justify-center gap-2 px-3 py-2">
+          <div
+            className="flex shrink-0 w-full touch-none select-none items-center justify-center gap-2 px-3 pt-2"
+            style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom, 8px))" }}
+          >
             <button
               type="button"
               aria-label="Open crime news"

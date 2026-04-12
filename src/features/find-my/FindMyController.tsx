@@ -464,7 +464,7 @@ export default function FindMyController({
         </div>
       )}
 
-      <div className="pointer-events-auto fixed left-0 top-[148px] z-40 flex items-start gap-0">
+      <div className="pointer-events-auto flex items-start gap-0">
       {/* Toggle tab */}
       <button
         onClick={() => setOpen(!open)}
