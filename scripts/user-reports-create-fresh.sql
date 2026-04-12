@@ -31,28 +31,28 @@ create table public.user_reports (
   updated_at timestamptz not null default now(),
   constraint user_reports_category_allowed check (
     category in (
-      'Gang Activity',
-      'Unsafe Vibe',
-      'Poor Lighting',
-      'Theft',
+      'Physical Altercation',
       'Harassment',
-      'Suspicious Activity',
-      'Vandalism',
-      'Drug Activity'
+      'Theft / Robbery',
+      'Public Disturbance',
+      'Suspicious Behavior',
+      'Substance Use',
+      'Property Damage',
+      'Environmental Hazard'
     )
   ),
   constraint user_reports_upvotes_nonnegative check (upvotes >= 0),
   constraint user_reports_downvotes_nonnegative check (downvotes >= 0),
   severity smallint not null generated always as (
     case category
-      when 'Gang Activity' then 10
+      when 'Physical Altercation' then 10
       when 'Harassment' then 9
-      when 'Poor Lighting' then 8
-      when 'Drug Activity' then 8
-      when 'Unsafe Vibe' then 7
-      when 'Theft' then 7
-      when 'Vandalism' then 6
-      when 'Suspicious Activity' then 5
+      when 'Environmental Hazard' then 8
+      when 'Substance Use' then 8
+      when 'Public Disturbance' then 7
+      when 'Theft / Robbery' then 7
+      when 'Property Damage' then 6
+      when 'Suspicious Behavior' then 5
       else 5
     end
   ) stored,

@@ -45,9 +45,7 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_SUPABASE_URL:
       process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "",
   },
-  devIndicators: {
-    position: "top-right",
-  },
+  devIndicators: false,
   /**
    * Pin Turbopack’s project root so Next doesn’t treat a parent folder
    * (e.g. `C:\\Users\\…` with its own lockfile) as the workspace root.

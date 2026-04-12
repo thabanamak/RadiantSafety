@@ -238,7 +238,7 @@ export default function Dashboard() {
         ? { id: authUser.id, name: authUser.name ?? "" }
         : null;
     const rows = await fetchUserReports(client, { self });
-    setSubmittedUserReports((prev) => mergeUserReports(rows, prev));
+    setSubmittedUserReports(rows);
     setUserReportsHydrated(true);
   }, [authUser?.id, authUser?.name]);
 
