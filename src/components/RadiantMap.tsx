@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Map, { Layer, Marker, Popup, Source, type MapRef } from "react-map-gl/mapbox";
+import Map, { Layer, Marker, Source, type MapRef } from "react-map-gl/mapbox";
 import type { LayerProps, MapMouseEvent } from "react-map-gl/mapbox";
 import { cn } from "@/lib/cn";
 import {
@@ -314,14 +314,6 @@ export default function RadiantMap({
   );
   const geojson = useMemo(() => toGeoJSON(mapPoints), [mapPoints]);
 
-  const [reportPopup, setReportPopup] = useState<{
-    longitude: number;
-    latitude: number;
-    category: string;
-    trustLabel: string | null;
-    trustPoints: number | null;
-  } | null>(null);
-
   /** Current zoom for police / medical marker sizing (updated on map move). */
   const [mapZoom, setMapZoom] = useState<number>(initialViewState.zoom);
 
@@ -491,60 +483,7 @@ export default function RadiantMap({
         return;
       }
 
-      let f = evt.features?.[0] ?? null;
-      if (!f?.properties) {
-        const mapbox = mapRef.current?.getMap?.();
-        if (mapbox) {
-          const { x, y } = evt.point;
-          const pad = 20;
-          const hits = mapbox.queryRenderedFeatures(
-            [
-              [x - pad, y - pad],
-              [x + pad, y + pad],
-            ],
-            { layers: ["incidents-points"] }
-          );
-          f = hits[0] ?? null;
-        }
-      }
-
-      if (f?.properties && f.geometry && f.geometry.type === "Point") {
-        const [lng, lat] = f.geometry.coordinates as [number, number];
-        const p = f.properties as Record<string, unknown>;
-        const cat = String(p.category ?? "Report");
-        const tp = p.trustPoints;
-        const trustPoints =
-          typeof tp === "number"
-            ? tp
-            : tp != null
-              ? Number(tp)
-              : null;
-        const tl = p.trustLabel;
-        const trustLabel =
-          typeof tl === "string" ? tl : tl != null ? String(tl) : null;
-
-        const map = mapRef.current;
-        const currentZoom = map?.getZoom?.() ?? 13;
-        map?.flyTo({
-          center: [lng, lat],
-          zoom: Math.max(currentZoom, 16),
-          pitch: 45,
-          duration: 1100,
-          essential: true,
-        });
-
-        setReportPopup({
-          longitude: lng,
-          latitude: lat,
-          category: cat,
-          trustLabel,
-          trustPoints: Number.isFinite(trustPoints as number)
-            ? (trustPoints as number)
-            : null,
-        });
-        return;
-      }
-      setReportPopup(null);
+      // Incident clicks are intentionally disabled — no popup or fly-to.
     },
     [dropPinMode, onPinDropped]
   );
@@ -582,7 +521,7 @@ export default function RadiantMap({
       onMove={onMove}
       onClick={handleMapClick}
       onLoad={onMapLoad}
-      interactiveLayerIds={["incidents-points"]}
+      interactiveLayerIds={[]}
       mapboxAccessToken={MAPBOX_TOKEN}
       mapStyle="mapbox://styles/mapbox/dark-v11"
       style={{ width: "100%", height: "100%" }}
@@ -612,34 +551,7 @@ export default function RadiantMap({
         </Source>
       )}
 
-      {reportPopup && (
-        <Popup
-          longitude={reportPopup.longitude}
-          latitude={reportPopup.latitude}
-          anchor="bottom"
-          onClose={() => setReportPopup(null)}
-          closeButton
-          closeOnClick={false}
-        >
-          <div className="max-w-[220px] text-xs text-gray-900">
-            <p className="font-semibold">{reportPopup.category}</p>
-            {reportPopup.trustLabel != null && (
-              <p className="mt-1 text-gray-700">
-                {reportPopup.trustLabel}
-                {reportPopup.trustPoints != null && (
-                  <span className="text-gray-500">
-                    {" "}
-                    · trust {reportPopup.trustPoints}
-                  </span>
-                )}
-              </p>
-            )}
-            {reportPopup.trustLabel == null && (
-              <p className="mt-1 text-gray-600">Official / historical incident</p>
-            )}
-          </div>
-        </Popup>
-      )}
+      {/* Incident popups removed — clicking incidents is disabled */}
 
       {/* GPS "ping me" marker — pulsing blue dot */}
       {gpsPin && (

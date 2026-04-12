@@ -1385,7 +1385,7 @@ export default function Dashboard() {
         </div>
 
         {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-0 top-1/2 z-[110] w-[200px] -translate-y-1/2">
+          <div className="pointer-events-auto absolute right-0 top-[calc(50%-16px)] z-[110] w-[200px] -translate-y-1/2">
             <AreaIncidentSummary
               center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
               vicpolItems={vicpolItems}
@@ -1488,7 +1488,7 @@ export default function Dashboard() {
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
-      <div className="pointer-events-auto fixed left-0 top-[calc(50%+52px)] z-[120] -translate-y-1/2">
+      <div className="pointer-events-auto fixed left-0 top-[calc(50%+68px)] z-[120] -translate-y-1/2">
         <FindMyController
           userCoords={userCoords}
           onFriendLocationsChange={setFriendLocations}
