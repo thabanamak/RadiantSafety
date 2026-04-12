@@ -604,11 +604,30 @@ export default function FindMyController({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setSharing((prev) => {
-                        if (!prev && !userCoords) return prev;
-                        return !prev;
-                      });
+                    onClick={async () => {
+                      if (sharing) {
+                        // Turning OFF — stop interval and remove our row from the DB
+                        // so other members immediately stop seeing our location.
+                        setSharing(false);
+                        if (roomCode && deviceId.current) {
+                          await fetch("/api/friends/leave", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              room_code: roomCode,
+                              device_id: deviceId.current,
+                            }),
+                          });
+                          // Remove self from local list; others will vanish via polling
+                          setMembers((prev) =>
+                            prev.filter((m) => m.device_id !== deviceId.current)
+                          );
+                        }
+                      } else {
+                        // Turning ON — only allowed when we have GPS coords
+                        if (!userCoords) return;
+                        setSharing(true);
+                      }
                     }}
                     disabled={!userCoords && !sharing}
                     aria-label="Toggle location sharing"

@@ -93,6 +93,7 @@ import {
   toggleUserReportVote,
 } from "@/lib/supabase-user-reports";
 import { computeTrustPoints, getTrustDisplayText } from "@/lib/report-trust";
+import { randomUUID } from "@/lib/uuid";
 
 interface VicPolIncident {
   id: string;
@@ -627,10 +628,7 @@ export default function Dashboard() {
         router.push("/signup");
         return;
       }
-      let id =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `report-${Date.now()}`;
+      let id = randomUUID();
 
       const { client } = getSupabaseBrowserClient();
       let inserted = false;
@@ -1357,44 +1355,6 @@ export default function Dashboard() {
       )}
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        {/* Left panel — SOS in the Area (and all SOS sheets) */}
-        {/* SOS / sheets rail — TopNav is portaled to document.body (z-[10000]) so Mapbox cannot cover it */}
-        <div className="pointer-events-auto fixed left-0 top-[calc(50%-30px)] z-[120] -translate-y-1/2">
-          <SOSController
-            userCoords={userCoords}
-            onFlyTo={setFlyTarget}
-            onAlertsChange={setSosMapAlerts}
-            sosMapAlerts={sosMapAlerts}
-            onAlertResolved={(alertId) =>
-              setSosMapAlerts((prev) => prev.filter((a) => a.id !== alertId))
-            }
-            open={showSOSSheet}
-            onOpenChange={(v) => {
-              setShowSOSSheet(v);
-              if (v) setFindMyOpen(false);
-            }}
-            areaPanelOpen={sosAreaOpen}
-            onAreaPanelOpenChange={(v) => {
-              setSosAreaOpen(v);
-              if (v) setFindMyOpen(false);
-            }}
-            canReceiveSOSPings={canReceiveSOSPings}
-            authUser={authUser}
-            onRequestRouteToSosLocation={requestRouteToSosLocation}
-          />
-        </div>
-
-        {routingStatus === "off" && (
-          <div className="pointer-events-auto absolute right-0 top-[calc(50%-16px)] z-[110] w-[200px] -translate-y-1/2">
-            <AreaIncidentSummary
-              center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
-              vicpolItems={vicpolItems}
-              supabaseItems={supabaseItems}
-              active={activeIncidentTab === "official"}
-            />
-          </div>
-        )}
-
         <Suspense fallback={null}>
           <WelcomeBanner authUser={authUser} />
         </Suspense>
@@ -1454,6 +1414,45 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* Left panel — SOS. Outside the z-10 overlay so z-[120] applies at root stacking context,
+          staying above the directions card (z-[60]) on mobile. */}
+      <div className="pointer-events-auto fixed left-0 top-[calc(50%-50px)] z-[120]">
+        <SOSController
+          userCoords={userCoords}
+          onFlyTo={setFlyTarget}
+          onAlertsChange={setSosMapAlerts}
+          sosMapAlerts={sosMapAlerts}
+          onAlertResolved={(alertId) =>
+            setSosMapAlerts((prev) => prev.filter((a) => a.id !== alertId))
+          }
+          open={showSOSSheet}
+          onOpenChange={(v) => {
+            setShowSOSSheet(v);
+            if (v) setFindMyOpen(false);
+          }}
+          areaPanelOpen={sosAreaOpen}
+          onAreaPanelOpenChange={(v) => {
+            setSosAreaOpen(v);
+            if (v) setFindMyOpen(false);
+          }}
+          canReceiveSOSPings={canReceiveSOSPings}
+          authUser={authUser}
+          onRequestRouteToSosLocation={requestRouteToSosLocation}
+        />
+      </div>
+
+      {/* Right panel — area summary. Fixed + outside z-10 overlay for same reason as SOS above. */}
+      {routingStatus === "off" && (
+        <div className="pointer-events-auto fixed right-0 top-[calc(50%-36px)] z-[110] w-[200px]">
+          <AreaIncidentSummary
+            center={mapCenter ?? { latitude: -37.8136, longitude: 144.9631, zoom: 13 }}
+            vicpolItems={vicpolItems}
+            supabaseItems={supabaseItems}
+            active={activeIncidentTab === "official"}
+          />
+        </div>
+      )}
+
       {/* TopNav outside pointer-events-none overlay so account / “Verify as First Responder” stay clickable (Codespaces, embedded previews, stacked sheets). */}
       <TopNav
         reputation={authUser ? reputationForAuthUser(authUser) : currentUser}
@@ -1488,7 +1487,7 @@ export default function Dashboard() {
       />
 
       {/* Feature controllers — self-contained, each owns its own UI and data */}
-      <div className="pointer-events-auto fixed left-0 top-[calc(50%+68px)] z-[120] -translate-y-1/2">
+      <div className="pointer-events-auto fixed left-0 top-[calc(50%+48px)] z-[120]">
         <FindMyController
           userCoords={userCoords}
           onFriendLocationsChange={setFriendLocations}

@@ -43,8 +43,6 @@ export type SubmittedReportPayload = {
   imageDataUrl?: string | null;
 };
 
-const PHOTO_GUIDELINE =
-  "Add an optional photo of the scene only: lighting, street, building exterior, or signage. Please avoid faces, people in distress, injuries, or graphic content — help keep the feed respectful and useful for everyone.";
 
 interface QuickReportFABProps {
   onPinLocation?: (pin: PinLocation | null) => void;
@@ -407,13 +405,8 @@ export default function QuickReportFAB({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe what you see (optional)..."
                 className="mb-3 w-full resize-none rounded-lg border border-radiant-border bg-radiant-card p-3 text-xs text-gray-200 placeholder-gray-600 outline-none focus:border-gray-500"
-                rows={3}
+                rows={2}
               />
-
-              <div className="mb-3 rounded-lg border border-sky-500/25 bg-sky-500/5 p-3">
-                <p className="text-[11px] font-semibold text-sky-200">Before you add a photo</p>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-gray-400">{PHOTO_GUIDELINE}</p>
-              </div>
 
               <div className="mb-4">
                 <input

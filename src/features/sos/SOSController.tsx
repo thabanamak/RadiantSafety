@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { randomUUID } from "@/lib/uuid";
 import { CheckCircle } from "lucide-react";
 import SOSAreaPanel, { type SOSAlert } from "@/components/SOSAreaPanel";
 import SOSIssueSheet, { type SOSIssueType } from "@/components/SOSIssueSheet";
@@ -157,7 +158,7 @@ export default function SOSController({
           const sb = getSupabaseBrowser();
           if (sb) {
             const ext = photo.name.split(".").pop() ?? "jpg";
-            const path = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+            const path = `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
             const { data, error } = await sb.storage
               .from("sos-photos")
               .upload(path, photo, { cacheControl: "3600", upsert: false });
@@ -230,7 +231,7 @@ export default function SOSController({
         const sb = getSupabaseBrowser();
         if (sb) {
           const ext = photo.name.split(".").pop() ?? "jpg";
-          const path = `resolve-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+          const path = `resolve-${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
           const { data, error } = await sb.storage
             .from("sos-photos")
             .upload(path, photo, { cacheControl: "3600", upsert: false });
